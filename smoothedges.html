@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Processing</title>
+</head>
+<body>
+  <input type="file" id="imageInput" accept="image/*">
+  <canvas id="originalCanvas" style="max-width: 100%;"></canvas>
+  <canvas id="processedCanvas" style="max-width: 100%;"></canvas>
+  <canvas id="finalCanvas" style="max-width: 100%;"></canvas>
+  
+  <script>
+
+
+    const imageInput = document.getElementById('imageInput');
+    const originalCanvas = document.getElementById('originalCanvas');
+    const processedCanvas = document.getElementById('processedCanvas');
+    const finalCanvas = document.getElementById('finalCanvas');
+    const originalCtx = originalCanvas.getContext('2d');
+    const processedCtx = processedCanvas.getContext('2d');
+    const finalCtx = finalCanvas.getContext('2d');
+    
+    const worker = new Worker('smoothedgesWorker.js');
+    
+    imageInput.addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      
+      reader.onload = function(event) {
+        const img = new Image();
+        img.onload = function() {
+          originalCanvas.width = img.width;
+          originalCanvas.height = img.height;
+          originalCtx.drawImage(img, 0, 0);
+          
+          const imageData = originalCtx.getImageData(0, 0, img.width, img.height);
+          worker.postMessage({ imageData: imageData });
+        };
+        img.src = event.target.result;
+      };
+      
+      reader.readAsDataURL(file);
+    });
+    
+
+worker.onmessage = function(e) {
+  const processedImageData = e.data.processedImageData;
+  const mergedImageData = e.data.mergedImageData;
+
+  // Display processed image
+  processedCanvas.width = processedImageData.width;
+  processedCanvas.height = processedImageData.height;
+  processedCtx.putImageData(processedImageData, 0, 0);
+
+  // Display merged image
+  finalCanvas.width = mergedImageData.width;
+  finalCanvas.height = mergedImageData.height;
+  finalCtx.putImageData(mergedImageData, 0, 0);
+};
+
+  </script>
+</body>
+</html>

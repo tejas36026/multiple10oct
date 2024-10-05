@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Edge Sharpening</title>
+    <style>
+        #imageCanvas { border: 1px solid black; }
+        #controls { margin-top: 10px; }
+        #progressBar {
+            width: 100%;
+            background-color: #ddd;
+            display: none;
+        }
+        #progressBar div {
+            width: 0%;
+            height: 30px;
+            background-color: #4CAF50;
+            text-align: center;
+            line-height: 30px;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <h1>Image Edge Sharpening</h1>
+    <canvas id="imageCanvas" width="500" height="500"></canvas>
+    <div id="controls">
+        <button onclick="processImage()">Sharpen Edges</button>
+        <input type="file" id="imageUpload" accept="image/*">
+        <br>
+        <label for="value1">Sharpening Intensity:</label>
+        <input type="range" id="value1" min="0" max="100" value="50">
+        <span id="value1Display">50</span>
+    </div>
+    <div id="progressBar"><div></div></div>
+    <div id="debugInfo"></div>
+
+    <script>
+        const worker = new Worker('sharpen-worker.js');
+        const canvas = document.getElementById('imageCanvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        if (!ctx) {
+           console.error('Failed to get 2D context');
+        }
+    
+        const imageUpload = document.getElementById('imageUpload');
+        const value1Input = document.getElementById('value1');
+        const value1Display = document.getElementById('value1Display');
+        const debugInfo = document.getElementById('debugInfo');
+
+        imageUpload.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    console.log('Canvas size after processing:', canvas.width, 'x', canvas.height);
+
+                    console.log('Image loaded. Canvas dimensions:', canvas.width, 'x', canvas.height);
+                }
+                img.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        });
+
+        value1Input.addEventListener('input', function() {
+            value1Display.textContent = this.value;
+        });
+
+        function getSelectedRegions() {
+            const allPixels = [];
+            for (let y = 0; y < canvas.height; y++) {
+                for (let x = 0; x < canvas.width; x++) {
+                    allPixels.push(y * canvas.width + x);
+                }
+            }
+            return [allPixels];
+        }
+
+        function processImage() {
+            const button = document.querySelector('button');
+            button.textContent = 'Processing...';
+            button.disabled = true;
+
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const selectedRegions = getSelectedRegions();
+            
+            worker.postMessage({
+                imageData: imageData,
+                selectedRegions: selectedRegions,
+                imageCount: 1,
+                value1: parseInt(value1Input.value),
+                value2: 0,
+                value3: 0,
+                value4: 0,
+                value5: 0
+            });
+        }
+
+worker.onmessage = function(e) {
+    console.log('Received message from worker:', e.data);
+    
+    if (e.data.progress !== undefined) {
+        // Update progress bar
+        const progressBar = document.querySelector('#progressBar');
+        const progressBarInner = progressBar.querySelector('div');
+        progressBar.style.display = 'block';
+        progressBarInner.style.width = `${e.data.progress * 100}%`;
+        progressBarInner.textContent = `${Math.round(e.data.progress * 100)}%`;
+    } else if (e.data.segmentedImages) {
+        if (Array.isArray(e.data.segmentedImages) && e.data.segmentedImages.length > 0) {
+            const imageData = e.data.segmentedImages[0];
+            console.log('Received image data. Size:', imageData.data.length);
+            console.log('Image dimensions:', imageData.width, 'x', imageData.height);
+            console.log('First 10 pixels of received data:', Array.from(imageData.data.slice(0, 40)));
+            
+            // Ensure canvas size matches the image
+            canvas.width = imageData.width;
+            canvas.height = imageData.height;
+            
+            ctx.putImageData(imageData, 0, 0);
+            console.log('Image data put on canvas');
+        } else {
+            console.error('Invalid segmentedImages data:', e.data.segmentedImages);
+        }
+        document.querySelector('button').disabled = false;
+        document.querySelector('#progressBar').style.display = 'none';
+    } else {
+        console.error('Unexpected message format:', e.data);
+    }
+};
+        worker.onerror = function(error) {
+            debugInfo.textContent = `Worker error: ${error.message}`;
+        };
+    </script>
+</body>
+</html>

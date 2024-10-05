@@ -1,0 +1,82 @@
+
+body {display: flex; margin: 0; padding: 0; height: 100vh; font-family: Arial, sans-serif;}
+#sidebar {width: 300px; background-color: #f0f0f0; padding: 20px; overflow-y: auto; height: 100vh; box-sizing: border-box; box-shadow: 2px 0 5px rgba(0,0,0,0.1); min-width: 200px; max-width: 50%;}
+#mainContent {flex-grow: 1; padding: 20px; overflow-y: auto;}
+.controls {display: flex; flex-direction: column; gap: 1px; margin-bottom: 20px;}
+.controls input, .controls button, .effect-button {width: 100%; padding: 10px; margin-bottom: 10px; border: none; border-radius: 5px; background-color: #ffffff; transition: all 0.3s ease;}
+.controls button, .effect-button {cursor: pointer; text-align: center; font-weight: bold; color: #333;}
+.controls button:hover, .effect-button:hover {background-color: #f5f5f5; box-shadow: 0 4px 8px rgba(0,0,0,0.15);}
+#effectControls {display: flex; flex-direction: column; gap: 1px;}
+.effect-button {opacity: 0.8;}
+.effect-button.processed {opacity: 1; background-color: #e6f3ff;}
+.effect-button.inactive {opacity: 0.5; background-color: #f0f0f0;}
+#resultsContainer {display: flex; flex-wrap: wrap;}
+.canvas-wrapper {display: inline-block; 
+    width: 200px;
+    height: 200px;
+    margin: 5px; 
+    text-align: center;}
+#masterCheckboxControl {margin-bottom: 15px;}
+.canvas-wrapper img{
+    width: 200px;
+    height: 200px;
+}
+input[type="file"], input[type="number"] {background-color: #ffffff; border: 1px solid #ddd;}
+label {margin-bottom: 5px; font-weight: bold; color: #555;}
+#imageCanvas {max-width: 100%;border: 1px solid #ddd;margin-bottom: 20px;}
+#createGifButton {
+    margin-top: 10px;
+    padding: 10px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+}
+#createGifButton:hover {
+    background-color: #45a049;
+}
+#imageCanvas { border: 1px solid black; }
+#generatedImages img { max-width: 1000px; margin: 5px; }
+#generatedImages {
+    display: grid;
+    gap: 20px;
+}
+
+.effect-container {
+    text-align: center;
+}
+
+.effect-container canvas {
+    max-width: 100%;
+    height: auto;
+}
+
+.gif-container {
+    margin-bottom: 20px;
+}
+
+.segmented-images {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.segment-wrapper {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.segment-wrapper p {
+    margin: 5px 0;
+    font-size: 14px;
+}
+
+.segment-wrapper canvas {
+    border: 1px solid #ddd;
+}
