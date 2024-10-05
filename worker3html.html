@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Detection and Removal</title>
+   </head>
+<body>
+
+    <script>
+function loadScript(src, callback) {
+    const script = document.createElement('script');
+    script.src = src;
+    script.onload = callback;
+    document.head.appendChild(script);
+}
+
+// Load Tesseract.js and OpenCV
+loadScript('https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js', () => {
+    loadScript('https://docs.opencv.org/4.5.2/opencv.js', onOpenCvReady);
+});
+
+// Create and append style
+const style = document.createElement('style');
+style.textContent = `
+    .result-container {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+    }
+    .threshold-result {
+        border: 1px solid #ccc;
+        padding: 10px;
+        max-width: 300px;
+    }
+    .threshold-result img {
+        max-width: 100%;
+    }
+`;
+document.head.appendChild(style);
+
+// Create and append HTML elements
+const imageInput = document.createElement('input');
+imageInput.type = 'file';
+imageInput.id = 'imageInput';
+imageInput.accept = 'image/*';
+
+const uploadedImage = document.createElement('img');
+uploadedImage.id = 'uploadedImage';
+uploadedImage.style.maxWidth = '100%';
+uploadedImage.style.marginBottom = '20px';
+
+const resultDiv = document.createElement('div');
+resultDiv.id = 'result';
+
+document.body.appendChild(imageInput);
+document.body.appendChild(uploadedImage);
+document.body.appendChild(resultDiv);
+
+        let cvReady = false;
+        let worker = new Worker('worker3htmlWorker.js');
+
+        function onOpenCvReady() {
+            cvReady = true;
+            console.log('OpenCV.js is ready.');
+        }
+
+        // const imageInput = document.getElementById('imageInput');
+        // const uploadedImage = document.getElementById('uploadedImage');
+        // const resultDiv = document.getElementById('result');
+
+        imageInput.addEventListener('change', function(e) {
+            if (!cvReady) {
+                alert('OpenCV.js is not ready yet. Please wait a moment and try again.');
+                return;
+            }
+
+            const file = e.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(event) {
+                uploadedImage.src = event.target.result;
+                uploadedImage.onload = function() {
+    const canvas = resizeImage(uploadedImage);
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    worker.postMessage({
+        action: 'processImage',
+        image: imageData
+    }, [imageData.data.buffer]);
+};
+            };
+
+            reader.readAsDataURL(file);
+        });
+
+        function resizeImage(img) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            const MAX_WIDTH = 1080;
+            
+            let width = img.width;
+            let height = img.height;
+
+            if (width > MAX_WIDTH) {
+                height = Math.round((height * MAX_WIDTH) / width);
+                width = MAX_WIDTH;
+            }
+
+            canvas.width = width;
+            canvas.height = height;
+
+            ctx.drawImage(img, 0, 0, width, height);
+            return canvas;
+        }
+
+        worker.onmessage = function(e) {
+            if (e.data.action === 'updateProgress') {
+                resultDiv.innerHTML = `<p>Processing: ${e.data.progress}%</p>`;
+            } else if (e.data.action === 'processComplete') {
+                displayResults(e.data.result);
+            }
+        };
+
+        function displayResults(result) {
+            let html = `
+                <h3>Best Threshold: ${result.bestThreshold}</h3>
+                <h4>Most Characters Detected: ${result.maxTextLength}</h4>
+                <h4>Best Text:</h4>
+                <pre>${result.bestText}</pre>
+                <h3>Original Image:</h3>
+                <img src="${result.originalImage}" alt="Original image">
+                <h3>Image with Text Removed:</h3>
+                <img src="${result.textRemovedImage}" alt="Image with text removed">
+                <h3>All Results:</h3>
+            `;
+
+            let resultsContainer = document.createElement('div');
+            resultsContainer.className = 'result-container';
+
+            for (let threshold of result.thresholds) {
+                let thresholdResult = document.createElement('div');
+                thresholdResult.className = 'threshold-result';
+                thresholdResult.innerHTML = `
+                    <h4>Threshold: ${threshold.value}</h4>
+                    <img src="${threshold.image}" alt="Preprocessed image">
+                    <p>Characters detected: ${threshold.textLength}</p>
+                    <pre>${threshold.text.substring(0, 100)}${threshold.text.length > 100 ? '...' : ''}</pre>
+                `;
+                resultsContainer.appendChild(thresholdResult);
+            }
+
+            resultDiv.innerHTML = html;
+            resultDiv.appendChild(resultsContainer);
+        }
+    
+    </script>
+</body>
+</html>

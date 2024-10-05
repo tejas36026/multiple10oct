@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Detection with Multiple Thresholds</title>
+    <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
+    <style>
+        .result-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+        .threshold-result {
+            border: 1px solid #ccc;
+            padding: 10px;
+            max-width: 300px;
+        }
+        .threshold-result img {
+            max-width: 100%;
+        }
+    </style>
+</head>
+<body>
+    <input type="file" id="imageInput" accept="image/*">
+    <img id="uploadedImage" style="max-width: 100%; margin-bottom: 20px;">
+    <div id="result"></div>
+    
+    <script>
+    const imageInput = document.getElementById('imageInput');
+    const uploadedImage = document.getElementById('uploadedImage');
+    const resultDiv = document.getElementById('result');
+
+    imageInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+
+        reader.onload = function(event) {
+            uploadedImage.src = event.target.result;
+            uploadedImage.onload = function() {
+                processWithMultipleThresholds(uploadedImage);
+            };
+        };
+
+        reader.readAsDataURL(file);
+    });
+
+    async function processWithMultipleThresholds(img) {
+        const thresholds = [50, 75, 100, 125, 150, 175, 200, 225, 250];
+        let bestThreshold = 0;
+        let maxTextLength = 0;
+        let bestText = '';
+
+        resultDiv.innerHTML = "<h3>Processing... Please wait.</h3>";
+
+        let resultsHtml = '<div class="result-container">';
+
+        for (let threshold of thresholds) {
+            const { canvas, imageData } = preprocess(img, threshold);
+            const text = await detectText(canvas);
+            
+            console.log(`Threshold ${threshold}: Detected ${text.length} characters`);
+
+            if (text.length > maxTextLength) {
+                maxTextLength = text.length;
+                bestThreshold = threshold;
+                bestText = text;
+            }
+
+            resultsHtml += `
+                <div class="threshold-result">
+                    <h4>Threshold: ${threshold}</h4>
+                    <img src="${canvas.toDataURL()}" alt="Preprocessed image">
+                    <p>Characters detected: ${text.length}</p>
+                    <pre>${text.substring(0, 100)}${text.length > 100 ? '...' : ''}</pre>
+                </div>
+            `;
+        }
+
+        resultsHtml += '</div>';
+
+        resultDiv.innerHTML = `
+            <h3>Best Threshold: ${bestThreshold}</h3>
+            <h4>Most Characters Detected: ${maxTextLength}</h4>
+            <h4>Best Text:</h4>
+            <pre>${bestText}</pre>
+            <h3>All Results:</h3>
+            ${resultsHtml}
+        `;
+    }
+
+    function preprocess(img, threshold) {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        
+        ctx.drawImage(img, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageData.data;
+
+        // Convert to grayscale
+        for (let i = 0; i < data.length; i += 4) {
+            const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+            data[i] = data[i + 1] = data[i + 2] = avg;
+        }
+
+        // Apply thresholding
+        for (let i = 0; i < data.length; i += 4) {
+            const value = data[i] > threshold ? 255 : 0;
+            data[i] = data[i + 1] = data[i + 2] = value;
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+        return { canvas, imageData };
+    }
+
+    async function detectText(canvas) {
+        try {
+            const result = await Tesseract.recognize(canvas, 'eng', {
+                logger: m => console.log(m)
+            });
+            return result.data.text;
+        } catch (error) {
+            console.error('Error in text detection:', error);
+            return '';
+        }
+    }
+    </script>
+</body>
+</html>

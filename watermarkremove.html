@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Text Detection, Blurring, and Re-detection</title>
+    <script src='https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js'></script>
+</head>
+<body>
+    <input type="file" id="imageInput" accept="image/*">
+    <img id="uploadedImage" style="max-width: 100%; margin-bottom: 20px;">
+    <canvas id="resultCanvas"></canvas>
+    <div id="originalResult"></div>
+    <div id="blurredResult"></div>
+    
+    <script>
+    const imageInput = document.getElementById('imageInput');
+    const uploadedImage = document.getElementById('uploadedImage');
+    const resultCanvas = document.getElementById('resultCanvas');
+    const originalResultDiv = document.getElementById('originalResult');
+    const blurredResultDiv = document.getElementById('blurredResult');
+
+    imageInput.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+
+        reader.onload = function(event) {
+            uploadedImage.src = event.target.result;
+            uploadedImage.onload = function() {
+                detectAndBlurText(uploadedImage);
+            };
+        };
+
+        reader.readAsDataURL(file);
+    });
+
+    function detectAndBlurText(img) {
+        console.log("Starting initial text detection");
+        Tesseract.recognize(img, 'eng', {
+            logger: m => console.log(m)
+        })
+        .then(({ data: { words } }) => {
+            console.log("Text detected:", words);
+            displayBlurredResult(img, words);
+            return words;
+        })
+        .then((words) => {
+            detectTextOnBlurred(words);
+        })
+        .catch(error => {
+            console.error('Error in text detection:', error);
+            originalResultDiv.innerHTML = "Error in text detection: " + error.message;
+        });
+    }
+
+    function displayBlurredResult(img, words) {
+        console.log("Displaying blurred result");
+        resultCanvas.width = img.width;
+        resultCanvas.height = img.height;
+        const ctx = resultCanvas.getContext('2d');
+        
+        ctx.drawImage(img, 0, 0);
+
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = img.width;
+        tempCanvas.height = img.height;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(img, 0, 0);
+
+        tempCtx.filter = 'blur(5px)';
+        tempCtx.drawImage(tempCanvas, 0, 0);
+
+        words.forEach(word => {
+            const { bbox } = word;
+            ctx.drawImage(tempCanvas, bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0,
+                          bbox.x0, bbox.y0, bbox.x1 - bbox.x0, bbox.y1 - bbox.y0);
+
+        });
+
+        let resultText = words.map(word => `Text: "${word.text}", Location: (${word.bbox.x0}, ${word.bbox.y0})`).join('<br>');
+        originalResultDiv.innerHTML = "<h3>Original Text Detection:</h3>" + (resultText || "No text detected");
+    }
+
+    function detectTextOnBlurred(originalWords) {
+        console.log("Starting text detection on blurred image");
+        Tesseract.recognize(resultCanvas, 'eng', {
+            logger: m => console.log(m)
+        })
+        .then(({ data: { words } }) => {
+            console.log("Text detected on blurred image:", words);
+            displayBlurredDetectionResult(words, originalWords);
+        })
+        .catch(error => {
+            console.error('Error in blurred text detection:', error);
+            blurredResultDiv.innerHTML = "Error in blurred text detection: " + error.message;
+        });
+    }
+
+    function displayBlurredDetectionResult(blurredWords, originalWords) {
+        let resultText = blurredWords.map(word => `Text: "${word.text}", Location: (${word.bbox.x0}, ${word.bbox.y0})`).join('<br>');
+        blurredResultDiv.innerHTML = "<h3>Text Detection After Blurring:</h3>" + (resultText || "No text detected");
+
+        // Compare results
+        let comparison = "<h3>Comparison:</h3>";
+        comparison += `Original words detected: ${originalWords.length}<br>`;
+        comparison += `Words detected after blurring: ${blurredWords.length}<br>`;
+        
+        const originalText = originalWords.map(w => w.text).join(' ');
+        const blurredText = blurredWords.map(w => w.text).join(' ');
+        comparison += `<br>Original text: "${originalText}"<br>`;
+        comparison += `Text after blurring: "${blurredText}"<br>`;
+
+        blurredResultDiv.innerHTML += comparison;
+    }
+    </script>
+</body>
+</html>

@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Text Removal with Multiple Libraries</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1 {
+            color: #333;
+        }
+        #imageInput, #processButton {
+            margin-bottom: 20px;
+        }
+        canvas {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Advanced Text Removal with Multiple Libraries</h1>
+    <input type="file" id="imageInput" accept="image/*">
+    <button id="processButton">Process Image</button>
+    <div>
+        <h2>Original Image</h2>
+        <canvas id="originalCanvas"></canvas>
+        <h2>Processed Image</h2>
+        <canvas id="processedCanvas"></canvas>
+    </div>
+    
+    <script>
+        const imageInput = document.getElementById('imageInput');
+        const processButton = document.getElementById('processButton');
+        const originalCanvas = document.getElementById('originalCanvas');
+        const processedCanvas = document.getElementById('processedCanvas');
+
+        if (window.Worker) {
+            const myWorker = new Worker('watermarkremoval1Worker.js');
+
+            processButton.addEventListener('click', () => {
+                const file = imageInput.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = function(e) {
+                        const img = new Image();
+                        img.onload = function() {
+                            originalCanvas.width = img.width;
+                            originalCanvas.height = img.height;
+                            const ctx = originalCanvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0);
+                            const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                            
+                            processButton.disabled = true;
+                            processButton.textContent = 'Processing...';
+                            
+                            myWorker.postMessage({
+                                command: 'processImage',
+                                imageData: imageData
+                            });
+                        }
+                        img.src = e.target.result;
+                    }
+                    reader.readAsDataURL(file);
+                }
+            });
+
+            myWorker.onmessage = function(e) {
+                if (e.data.command === 'processComplete') {
+                    const processedImageData = e.data.processedImageData;
+                    processedCanvas.width = processedImageData.width;
+                    processedCanvas.height = processedImageData.height;
+                    const ctx = processedCanvas.getContext('2d');
+                    ctx.putImageData(processedImageData, 0, 0);
+                    
+                    processButton.disabled = false;
+                    processButton.textContent = 'Process Image';
+                }
+            }
+        } else {
+            console.log('Your browser doesn\'t support web workers.');
+        }
+    </script>
+</body>
+</html>
