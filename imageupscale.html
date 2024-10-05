@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Viewer with Zoom</title>
+    <style>
+        #image-container {
+            width: 100%;
+            height: 500px;
+            overflow: hidden;
+            position: relative;
+        }
+        #viewer-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            transform-origin: 0 0;
+        }
+        #controls {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <input type="file" id="image-input" accept="image/*">
+    <div id="image-container">
+        <img id="viewer-image" src="" alt="Uploaded image">
+    </div>
+    <div id="controls">
+        <button id="zoom-in">Zoom In</button>
+        <button id="zoom-out">Zoom Out</button>
+    </div>
+    <script src="imageupscaleWorker.js"></script>
+    <script>
+const imageInput = document.getElementById('image-input');
+const viewerImage = document.getElementById('viewer-image');
+const imageContainer = document.getElementById('image-container');
+const zoomInButton = document.getElementById('zoom-in');
+const zoomOutButton = document.getElementById('zoom-out');
+
+let scale = 1;
+let isDragging = false;
+let startX, startY, translateX = 0, translateY = 0;
+
+// Create a Web Worker
+const worker = new Worker('worker.js');
+
+imageInput.addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+  
+  reader.onload = function(event) {
+    originalImage = new Image();
+    originalImage.onload = function() {
+      originalCanvas.width = originalImage.width;
+      originalCanvas.height = originalImage.height;
+      originalCtx.drawImage(originalImage, 0, 0);
+      
+      const imageData = originalCtx.getImageData(0, 0, originalImage.width, originalImage.height);
+        worker.postMessage({ imageData: imageData }, [imageData.data.buffer]);
+
+    };
+    originalImage.src = event.target.result;
+  };
+  
+  reader.readAsDataURL(file);
+});
+
+
+zoomInButton.addEventListener('click', () => {
+    scale *= 1.2;
+    updateImageTransform();
+});
+
+zoomOutButton.addEventListener('click', () => {
+    scale /= 1.2;
+    updateImageTransform();
+});
+
+imageContainer.addEventListener('mousedown', startDragging);
+imageContainer.addEventListener('mousemove', drag);
+imageContainer.addEventListener('mouseup', stopDragging);
+imageContainer.addEventListener('mouseleave', stopDragging);
+
+function startDragging(e) {
+    isDragging = true;
+    startX = e.clientX - translateX;
+    startY = e.clientY - translateY;
+}
+
+function drag(e) {
+    if (isDragging) {
+        translateX = e.clientX - startX;
+        translateY = e.clientY - startY;
+        updateImageTransform();
+    }
+}
+
+function stopDragging() {
+    isDragging = false;
+}
+
+function updateImageTransform() {
+    viewerImage.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+}
+
+// Example of using the Web Worker
+worker.postMessage({ action: 'processImage', imageData: viewerImage.src });
+
+worker.onmessage = function(e) {
+    console.log('Message received from worker:', e.data);
+    // Handle the processed data here
+};
+let originalImage;
+
+imageInput.addEventListener('change', function(e) {
+  const file = e.target.files[0];
+  const reader = new FileReader();
+  
+  reader.onload = function(event) {
+    originalImage = new Image();
+    originalImage.onload = function() {
+      originalCanvas.width = originalImage.width;
+      originalCanvas.height = originalImage.height;
+      originalCtx.drawImage(originalImage, 0, 0);
+      
+      const imageData = originalCtx.getImageData(0, 0, originalImage.width, originalImage.height);
+      worker.postMessage({ imageData: imageData });
+    };
+    originalImage.src = event.target.result;
+  };
+  
+  reader.readAsDataURL(file);
+});
+
+const processedCanvas = document.createElement('canvas');
+const processedCtx = processedCanvas.getContext('2d');
+const originalCanvas = document.createElement('canvas');
+const originalCtx = originalCanvas.getContext('2d');
+// const processedCanvas = document.createElement('canvas');
+// const processedCtx = processedCanvas.getContext('2d');
+
+
+
+worker.onmessage = function(e) {
+  const processedImageData = e.data.processedImageData;
+  processedCanvas.width = processedImageData.width;
+  processedCanvas.height = processedImageData.height;
+  processedCtx.putImageData(processedImageData, 0, 0);
+  
+  // Create a new canvas for the final merged image
+  const mergedCanvas = document.createElement('canvas');
+  mergedCanvas.width = processedImageData.width;
+  mergedCanvas.height = processedImageData.height;
+  const mergedCtx = mergedCanvas.getContext('2d');
+
+  // Draw the original image
+  mergedCtx.drawImage(originalImage, 0, 0);
+
+  // Get image data from both original and processed images
+  const originalImageData = originalCtx.getImageData(0, 0, originalCanvas.width, originalCanvas.height);
+  const mergedImageData = mergedCtx.getImageData(0, 0, mergedCanvas.width, mergedCanvas.height);
+
+  const origData = originalImageData.data;
+  const procData = processedImageData.data;
+  const mergedData = mergedImageData.data;
+
+
+  // Define threshold for background (adjust as needed)
+  const threshold = 200;
+
+  for (let i = 0; i < mergedData.length; i += 4) {
+    // Check if pixel is likely background (light)
+    if (origData[i] > threshold && origData[i+1] > threshold && origData[i+2] > threshold) {
+      // Apply lighten effect to background
+      mergedData[i] = Math.min(255, origData[i] + (255 - origData[i]) * 0.5);     // Red
+      mergedData[i+1] = Math.min(255, origData[i+1] + (255 - origData[i+1]) * 0.5); // Green
+      mergedData[i+2] = Math.min(255, origData[i+2] + (255 - origData[i+2]) * 0.5); // Blue
+    } else {
+      // Keep original color for foreground
+      mergedData[i] = origData[i];     // Red
+      mergedData[i+1] = origData[i+1]; // Green
+      mergedData[i+2] = origData[i+2]; // Blue
+    }
+    // Keep original alpha
+    mergedData[i+3] = origData[i+3];
+  }
+
+  // Put the merged image data back to the merged canvas
+  mergedCtx.putImageData(mergedImageData, 0, 0);
+
+  // Display the final result
+  document.body.appendChild(mergedCanvas);
+};
+
+
+
+    </script>
+</body>
+</html>

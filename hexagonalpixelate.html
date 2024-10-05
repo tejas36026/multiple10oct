@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hexagonal Pixelate Demo</title>
+</head>
+<body>
+    <input type="file" id="imageInput" accept="image/*">
+    <br>
+    <canvas id="canvas"></canvas>
+    <br>
+    <label for="sizeSlider">Hexagon Size:</label>
+    <input type="range" id="sizeSlider" min="1" max="50" value="10">
+    <br>
+    <label for="greenSlider">Green Adjustment:</label>
+    <input type="range" id="greenSlider" min="-100" max="100" value="0">
+    <br>
+    <button id="applyEffect">Apply Effect</button>
+
+    <script>
+    
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageInput = document.getElementById('imageInput');
+        const sizeSlider = document.getElementById('sizeSlider');
+        const greenSlider = document.getElementById('greenSlider');
+        const applyButton = document.getElementById('applyEffect');
+
+        let originalImageData;
+
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                };
+                img.src = event.target.result;
+            };
+
+            reader.readAsDataURL(file);
+        });
+
+        applyButton.addEventListener('click', () => {
+            if (!originalImageData) return;
+
+            const worker = new Worker('hexagonalPixelateWorker.js');
+
+            worker.onmessage = (e) => {
+                const { segmentedImages } = e.data;
+                ctx.putImageData(segmentedImages[0], 0, 0);
+            };
+
+            const allPixels = new Array(canvas.width * canvas.height).fill(0).map((_, i) => i);
+
+            worker.postMessage({
+                imageData: originalImageData,
+                selectedRegions: [allPixels],
+                imageCount: 1,
+                value1: parseInt(sizeSlider.value),
+                value2: parseInt(greenSlider.value),
+                value3: 0,
+                value4: 0,
+                value5: 0,
+                clickedPoints: [],
+                lines: []
+            });
+        });
+    
+    </script>
+</body>
+</html>

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seam Carving with Web Workers and Mask</title>
+</head>
+<body>
+    <h1>Seam Carving Image Resizer with Mask</h1>
+    <div>
+        <label for="imageInput">Upload Image:</label>
+        <input type="file" id="imageInput" accept="image/*">
+    </div>
+    <div>
+        <label for="maskInput">Upload Mask (optional):</label>
+        <input type="file" id="maskInput" accept="image/*">
+    </div>
+    <div>
+        <label for="widthInput">New Width:</label>
+        <input type="number" id="widthInput" min="1">
+    </div>
+    <button id="resizeButton">Resize Image</button>
+    <div>
+        <h2>Original Image</h2>
+        <canvas id="originalCanvas"></canvas>
+    </div>
+    <div>
+        <h2>Mask (if uploaded)</h2>
+        <canvas id="maskCanvas"></canvas>
+    </div>
+    <div>
+        <h2>Resized Image</h2>
+        <canvas id="resizedCanvas"></canvas>
+    </div>
+
+    <script>
+        const imageInput = document.getElementById('imageInput');
+        const maskInput = document.getElementById('maskInput');
+        const widthInput = document.getElementById('widthInput');
+        const resizeButton = document.getElementById('resizeButton');
+        const originalCanvas = document.getElementById('originalCanvas');
+        const maskCanvas = document.getElementById('maskCanvas');
+        const resizedCanvas = document.getElementById('resizedCanvas');
+
+        let originalImage;
+        let maskImage;
+
+        function loadImage(file, canvas) {
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        canvas.width = img.width;
+                        canvas.height = img.height;
+                        canvas.getContext('2d').drawImage(img, 0, 0);
+                        resolve(img);
+                    };
+                    img.src = event.target.result;
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        imageInput.addEventListener('change', async (e) => {
+            originalImage = await loadImage(e.target.files[0], originalCanvas);
+            widthInput.value = originalImage.width;
+        });
+
+        maskInput.addEventListener('change', async (e) => {
+            maskImage = await loadImage(e.target.files[0], maskCanvas);
+        });
+
+        resizeButton.addEventListener('click', () => {
+            if (!originalImage) {
+                alert('Please select an image first.');
+                return;
+            }
+
+            const newWidth = parseInt(widthInput.value);
+            if (isNaN(newWidth) || newWidth < 1 || newWidth >= originalImage.width) {
+                alert('Please enter a valid width smaller than the original image width.');
+                return;
+            }
+
+            const worker = new Worker('imageSeam.js');
+
+            worker.onmessage = (e) => {
+                const { img, size } = e.data;
+                resizedCanvas.width = size.w;
+                resizedCanvas.height = size.h;
+                const ctx = resizedCanvas.getContext('2d');
+                const imageData = new ImageData(img.data, size.w, size.h);
+                ctx.putImageData(imageData, 0, 0);
+                worker.terminate();
+            };
+
+            const originalCtx = originalCanvas.getContext('2d');
+            const imageData = originalCtx.getImageData(0, 0, originalImage.width, originalImage.height);
+
+            let maskData = null;
+            if (maskImage) {
+                const maskCtx = maskCanvas.getContext('2d');
+                maskData = maskCtx.getImageData(0, 0, maskImage.width, maskImage.height);
+            }
+
+            worker.postMessage({
+                img: imageData,
+                mask: maskData,
+                toWidth: newWidth
+            });
+        });
+    </script>
+</body>
+</html>

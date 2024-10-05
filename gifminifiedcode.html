@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GIF Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gifshot/0.4.5/gifshot.min.js"></script>
+</head>
+<body>
+    <button id="createGif">Create GIF</button>
+    <div id="result"></div>
+    <canvas id="bitmap"></canvas>
+    <script src='gifshot.js'></script>
+    <script type="text/javascript" src="LZWEncoder.js"></script>
+    <script type="text/javascript" src="NeuQuant.js"></script>
+    <script type="text/javascript" src="GIFEncoder.js"></script>
+    <script type="text/javascript" src="b64.js"></script>
+    <script>
+    var canvas = document.getElementById('bitmap');
+    var context = canvas.getContext('2d');
+    context.fillStyle = 'rgb(255,255,255)';
+    context.fillRect(0,0,canvas.width, canvas.height);
+    context.fillStyle = "rgb(200,0,0)";  
+    context.fillRect (10, 10, 75, 50);  
+    var encoder = new GIFEncoder();
+    encoder.setRepeat(0); 
+    encoder.start();
+    encoder.addFrame(context);
+    encoder.finish();
+    var binary_gif = encoder.stream().getData();
+    var data_url = 'data:image/gif;base64,'+encode64(binary_gif);
+    encoder.download("download.gif");
+
+    </script>
+</body>
+</html>
