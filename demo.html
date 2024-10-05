@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seam Carving Object Removal Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        canvas {
+            border: 1px solid #000;
+            margin-top: 10px;
+        }
+        button {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Seam Carving Object Removal Demo</h1>
+    <input type="file" id="imageUpload" accept="image/*">
+    <br>
+    <canvas id="imageCanvas"></canvas>
+    <br>
+    <button id="toggleDraw">Toggle Draw Mode</button>
+    <button id="applySeamCarving">Apply Local Seam Carving</button>
+
+    <script>
+        const canvas = document.getElementById('imageCanvas');
+        const ctx = canvas.getContext('2d');
+        const imageUpload = document.getElementById('imageUpload');
+        const toggleDrawBtn = document.getElementById('toggleDraw');
+        const applySeamCarvingBtn = document.getElementById('applySeamCarving');
+
+        let isDrawing = false;
+        let drawMode = false;
+        let originalImage = null;
+        let drawnPoints = [];
+
+        imageUpload.addEventListener('change', loadImage);
+        toggleDrawBtn.addEventListener('click', toggleDrawMode);
+        applySeamCarvingBtn.addEventListener('click', applyLocalSeamCarving);
+
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        window.onload = loadImage;
+        
+        function loadImage() {
+            const img = new Image();
+            img.onload = function() {
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                originalImage = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                drawnPoints = [];
+            }
+            img.src = 'balloon.jpg'; // Replace with the path to your image
+        }
+
+        function toggleDrawMode() {
+            drawMode = !drawMode;
+            toggleDrawBtn.textContent = drawMode ? 'Disable Draw Mode' : 'Enable Draw Mode';
+        }
+
+        function startDrawing(e) {
+            if (!drawMode) return;
+            isDrawing = true;
+            draw(e);
+        }
+
+        function draw(e) {
+            if (!isDrawing || !drawMode) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.beginPath();
+            ctx.arc(x, y, 10, 0, Math.PI * 2);
+            ctx.fill();
+            drawnPoints.push({ x, y });
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
+        
+    function applyLocalSeamCarving() {
+        if (drawnPoints.length === 0) {
+            return;
+        }
+
+    // Start with a fresh copy of the original image
+    let imageData = new ImageData(
+        new Uint8ClampedArray(originalImage.data),
+        originalImage.width,
+        originalImage.height
+    );
+
+    const { minX, maxX, minY, maxY } = getDrawnArea();
+    const width = imageData.width;
+    const selectionWidth = maxX - minX + 1;
+
+    // Function to interpolate between two colors
+    function interpolateColor(color1, color2, factor) {
+        return color1.map((channel, index) => 
+            Math.round(channel + (color2[index] - channel) * factor)
+        );
+    }
+
+    // Remove the selected region and stretch neighboring pixels
+    for (let y = minY; y <= maxY; y++) {
+        // Get colors of pixels just outside the selection
+        const leftColor = [
+            imageData.data[(y * width + minX - 1) * 4],
+            imageData.data[(y * width + minX - 1) * 4 + 1],
+            imageData.data[(y * width + minX - 1) * 4 + 2],
+            imageData.data[(y * width + minX - 1) * 4 + 3]
+        ];
+        const rightColor = [
+            imageData.data[(y * width + maxX + 1) * 4],
+            imageData.data[(y * width + maxX + 1) * 4 + 1],
+            imageData.data[(y * width + maxX + 1) * 4 + 2],
+            imageData.data[(y * width + maxX + 1) * 4 + 3]
+        ];
+
+        // Stretch pixels across the removed area
+        for (let x = minX; x <= maxX; x++) {
+            const factor = (x - minX) / selectionWidth;
+            const interpolatedColor = interpolateColor(leftColor, rightColor, factor);
+            const index = (y * width + x) * 4;
+            imageData.data[index] = interpolatedColor[0];
+            imageData.data[index + 1] = interpolatedColor[1];
+            imageData.data[index + 2] = interpolatedColor[2];
+            imageData.data[index + 3] = interpolatedColor[3];
+        }
+    }
+
+    // Apply the changes to the canvas
+    ctx.putImageData(imageData, 0, 0);
+
+    // Clear the drawn points
+    drawnPoints = [];
+}
+
+
+function getDrawnArea() {
+    const xs = drawnPoints.map(p => p.x);
+    const ys = drawnPoints.map(p => p.y);
+    return {
+        minX: Math.max(1, Math.min(...xs)), // Ensure we have a pixel to the left
+        maxX: Math.min(canvas.width - 2, Math.max(...xs)), // Ensure we have a pixel to the right
+        minY: Math.max(0, Math.min(...ys)),
+        maxY: Math.min(canvas.height - 1, Math.max(...ys))
+    };
+}
+
+
+function calculateLocalEnergyMap(imageData, minX, maxX, minY, maxY, padding) {
+    const width = maxX - minX + 2 * padding;
+    const height = maxY - minY + 2 * padding;
+    const energyMap = new Array(height).fill(null).map(() => new Array(width).fill(0));
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const imgX = x + minX - padding;
+            const imgY = y + minY - padding;
+            const index = (imgY * imageData.width + imgX) * 4;
+            const r = imageData.data[index];
+            const g = imageData.data[index + 1];
+            const b = imageData.data[index + 2];
+
+            // Check if the pixel is part of the original red marking
+            if (r > 200 && g < 100 && b < 100) {
+                // Use the energy of surrounding non-red pixels
+                energyMap[y][x] = calculateSurroundingEnergy(imageData, imgX, imgY);
+            } else {
+                // Calculate energy based on color differences with neighboring pixels
+                energyMap[y][x] = calculatePixelEnergy(imageData, imgX, imgY);
+            }
+        }
+    }
+
+    return energyMap;
+}
+
+
+function calculateSurroundingEnergy(imageData, x, y) {
+    const offsets = [[-1, 0], [1, 0], [0, -1], [0, 1]];
+    let totalEnergy = 0;
+    let count = 0;
+
+    for (const [dx, dy] of offsets) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (nx >= 0 && nx < imageData.width && ny >= 0 && ny < imageData.height) {
+            const index = (ny * imageData.width + nx) * 4;
+            const r = imageData.data[index];
+            const g = imageData.data[index + 1];
+            const b = imageData.data[index + 2];
+            if (!(r > 200 && g < 100 && b < 100)) {
+                totalEnergy += calculatePixelEnergy(imageData, nx, ny);
+                count++;
+            }
+        }
+    }
+
+    return count > 0 ? totalEnergy / count : 1000; // Default to high energy if all neighbors are red
+}
+
+
+function calculatePixelEnergy(imageData, x, y) {
+    const width = imageData.width;
+    const height = imageData.height;
+    const getPixel = (x, y) => {
+        const i = (y * width + x) * 4;
+        return [imageData.data[i], imageData.data[i + 1], imageData.data[i + 2]];
+    };
+
+    const left = x > 0 ? getPixel(x - 1, y) : getPixel(x, y);
+    const right = x < width - 1 ? getPixel(x + 1, y) : getPixel(x, y);
+    const up = y > 0 ? getPixel(x, y - 1) : getPixel(x, y);
+    const down = y < height - 1 ? getPixel(x, y + 1) : getPixel(x, y);
+
+    const dx = left.map((v, i) => v - right[i]);
+    const dy = up.map((v, i) => v - down[i]);
+
+    return Math.sqrt(dx.reduce((sum, d) => sum + d * d, 0) + dy.reduce((sum, d) => sum + d * d, 0));
+}
+
+
+        function findLocalLowEnergySeam(energyMap) {
+            const width = energyMap[0].length;
+            const height = energyMap.length;
+            const dp = new Array(height).fill(null).map(() => new Array(width).fill(0));
+
+            for (let x = 0; x < width; x++) {
+                dp[0][x] = energyMap[0][x];
+            }
+
+            for (let y = 1; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const left = x > 0 ? dp[y-1][x-1] : Infinity;
+                    const up = dp[y-1][x];
+                    const right = x < width - 1 ? dp[y-1][x+1] : Infinity;
+                    dp[y][x] = energyMap[y][x] + Math.min(left, up, right);
+                }
+            }
+
+            const seam = [];
+            let x = dp[height-1].indexOf(Math.min(...dp[height-1]));
+            seam.push(x);
+
+            for (let y = height - 1; y > 0; y--) {
+                const left = x > 0 ? dp[y-1][x-1] : Infinity;
+                const up = dp[y-1][x];
+                const right = x < width - 1 ? dp[y-1][x+1] : Infinity;
+                const minEnergy = Math.min(left, up, right);
+
+                if (minEnergy === left) x--;
+                else if (minEnergy === right) x++;
+                seam.push(x);
+            }
+
+            return seam.reverse();
+        }
+
+        function removeLocalSeam(imageData, seam, startX, startY, localWidth, padding) {
+    const endX = startX + localWidth;
+    const shiftWidth = padding * 2; // Area to shift on the right side
+
+    for (let y = 0; y < seam.length; y++) {
+        const seamX = seam[y];
+        
+        // Shift pixels within the local area
+        for (let x = seamX; x < localWidth - 1; x++) {
+            const currentIndex = ((y + startY) * imageData.width + (x + startX)) * 4;
+            const nextIndex = ((y + startY) * imageData.width + (x + startX + 1)) * 4;
+            imageData.data[currentIndex] = imageData.data[nextIndex];
+            imageData.data[currentIndex + 1] = imageData.data[nextIndex + 1];
+            imageData.data[currentIndex + 2] = imageData.data[nextIndex + 2];
+            imageData.data[currentIndex + 3] = imageData.data[nextIndex + 3];
+        }
+
+        // Shift pixels in the padding area on the right
+        for (let x = endX; x < Math.min(endX + shiftWidth, imageData.width) - 1; x++) {
+            const currentIndex = ((y + startY) * imageData.width + x) * 4;
+            const nextIndex = ((y + startY) * imageData.width + x + 1) * 4;
+            imageData.data[currentIndex] = imageData.data[nextIndex];
+            imageData.data[currentIndex + 1] = imageData.data[nextIndex + 1];
+            imageData.data[currentIndex + 2] = imageData.data[nextIndex + 2];
+            imageData.data[currentIndex + 3] = imageData.data[nextIndex + 3];
+        }
+    }
+}
+    
+    
+    </script>
+</body>
+</html>

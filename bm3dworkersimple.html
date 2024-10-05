@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Denoising with BM3D</title>
+</head>
+<body>
+    <input type="file" id="imageInput" accept="image/*">
+    <button id="denoiseButton">Denoise Image</button>
+    <div>
+        <canvas id="originalCanvas"></canvas>
+        <canvas id="denoisedCanvas"></canvas>
+    </div>
+    <p id="psnrResult"></p>
+
+    <script>
+        function simplifiedBM3D(imageData, sigma, params) {
+            const { width, height, data } = imageData;
+            const channels = 3; // R, G, B
+            const inputArrays = new Array(channels).fill().map(() => new Float32Array(width * height));
+            
+            // Separate channels
+            for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+                inputArrays[0][j] = data[i];     // R
+                inputArrays[1][j] = data[i + 1]; // G
+                inputArrays[2][j] = data[i + 2]; // B
+            }
+            
+            // Process each channel
+            const denoisedArrays = inputArrays.map(inputArray => 
+                BM3D1stStep(inputArray, width, height, sigma, params)
+            );
+            
+            // Recombine channels
+            const uint8Data = new Uint8ClampedArray(width * height * 4);
+            for (let i = 0, j = 0; i < denoisedArrays[0].length; i++, j += 4) {
+                uint8Data[j] = Math.round(denoisedArrays[0][i]);     // R
+                uint8Data[j + 1] = Math.round(denoisedArrays[1][i]); // G
+                uint8Data[j + 2] = Math.round(denoisedArrays[2][i]); // B
+                uint8Data[j + 3] = 255; // Alpha channel
+            }
+            
+            return new ImageData(uint8Data, width, height);
+        }
+
+        function BM3D1stStep(imgArray, width, height, sigma, params) {
+            const {
+                step1BlkSize = 8,
+                step1BlkStep = 4,
+                step1MaxMatchedCnt = 16,
+                step1SearchWindow = 20,
+                step1MatchThreshold = 2500
+            } = params;
+
+            const result = new Float32Array(imgArray);
+            const weight = new Float32Array(imgArray.length).fill(0);
+
+            for (let i = 0; i < width - step1BlkSize + 1; i += step1BlkStep) {
+                for (let j = 0; j < height - step1BlkSize + 1; j += step1BlkStep) {
+                    const similarBlocks = findSimilarBlocks(imgArray, width, height, [i, j], step1BlkSize, step1SearchWindow, step1MatchThreshold, step1MaxMatchedCnt);
+                    const filteredBlocks = hardThreshold3DTransform(similarBlocks, sigma);
+                    
+                    for (let k = 0; k < filteredBlocks.length; k++) {
+                        aggregateBlock(result, weight, filteredBlocks[k], similarBlocks[k].position, step1BlkSize, width);
+                    }
+                }
+            }
+
+            for (let i = 0; i < result.length; i++) {
+                result[i] = weight[i] > 0 ? result[i] / weight[i] : imgArray[i];
+            }
+
+            return result;
+        }
+
+        function findSimilarBlocks(imgArray, width, height, blockPoint, blkSize, searchWindow, threshold, maxMatchedCnt) {
+            const [x, y] = blockPoint;
+            const similarBlocks = [];
+            const referenceBlock = getBlock(imgArray, x, y, blkSize, width);
+
+            similarBlocks.push({ block: referenceBlock, position: [x, y], distance: 0 });
+
+            const searchStartX = Math.max(0, x - searchWindow);
+            const searchEndX = Math.min(width - blkSize, x + searchWindow);
+            const searchStartY = Math.max(0, y - searchWindow);
+            const searchEndY = Math.min(height - blkSize, y + searchWindow);
+
+            for (let i = searchStartX; i <= searchEndX; i++) {
+                for (let j = searchStartY; j <= searchEndY; j++) {
+                    if (i === x && j === y) continue;
+                    
+                    const candidateBlock = getBlock(imgArray, i, j, blkSize, width);
+                    const distance = calculateBlockDistance(referenceBlock, candidateBlock);
+                    
+                    if (distance < threshold) {
+                        similarBlocks.push({ block: candidateBlock, position: [i, j], distance });
+                        if (similarBlocks.length >= maxMatchedCnt) {
+                            return similarBlocks;
+                        }
+                    }
+                }
+            }
+
+            return similarBlocks;
+        }
+
+        function getBlock(imgArray, x, y, size, width) {
+            const block = new Float32Array(size * size);
+            for (let i = 0; i < size; i++) {
+                for (let j = 0; j < size; j++) {
+                    block[i * size + j] = imgArray[(y + j) * width + (x + i)];
+                }
+            }
+            return block;
+        }
+
+        function calculateBlockDistance(block1, block2) {
+            let sum = 0;
+            for (let i = 0; i < block1.length; i++) {
+                const diff = block1[i] - block2[i];
+                sum += diff * diff;
+            }
+            return sum / block1.length;
+        }
+
+        function hardThreshold3DTransform(similarBlocks, sigma) {
+            const threshold = 2.7 * sigma;
+            return similarBlocks.map(block => {
+                const dctBlock = dct2D(block.block);
+                for (let i = 0; i < dctBlock.length; i++) {
+                    dctBlock[i] = Math.abs(dctBlock[i]) < threshold ? 0 : dctBlock[i];
+                }
+                return idct2D(dctBlock);
+            });
+        }
+
+        function dct2D(block) {
+            const N = Math.sqrt(block.length);
+            const result = new Float32Array(N * N);
+            for (let u = 0; u < N; u++) {
+                for (let v = 0; v < N; v++) {
+                    let sum = 0;
+                    for (let i = 0; i < N; i++) {
+                        for (let j = 0; j < N; j++) {
+                            sum += block[i * N + j] * Math.cos((2 * i + 1) * u * Math.PI / (2 * N)) * Math.cos((2 * j + 1) * v * Math.PI / (2 * N));
+                        }
+                    }
+                    result[u * N + v] = sum * (u === 0 ? 1 / Math.sqrt(N) : Math.sqrt(2 / N)) * (v === 0 ? 1 / Math.sqrt(N) : Math.sqrt(2 / N));
+                }
+            }
+            return result;
+        }
+
+        function idct2D(block) {
+            const N = Math.sqrt(block.length);
+            const result = new Float32Array(N * N);
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    let sum = 0;
+                    for (let u = 0; u < N; u++) {
+                        for (let v = 0; v < N; v++) {
+                            sum += block[u * N + v] * (u === 0 ? 1 / Math.sqrt(N) : Math.sqrt(2 / N)) * (v === 0 ? 1 / Math.sqrt(N) : Math.sqrt(2 / N)) * Math.cos((2 * i + 1) * u * Math.PI / (2 * N)) * Math.cos((2 * j + 1) * v * Math.PI / (2 * N));
+                        }
+                    }
+                    result[i * N + j] = sum;
+                }
+            }
+            return result;
+        }
+
+        function aggregateBlock(result, weight, block, position, blockSize, width) {
+            const [x, y] = position;
+            for (let i = 0; i < blockSize; i++) {
+                for (let j = 0; j < blockSize; j++) {
+                    const index = (y + j) * width + (x + i);
+                    result[index] += block[i * blockSize + j];
+                    weight[index]++;
+                }
+            }
+        }
+
+        function calculatePSNR(img1, img2) {
+            let mse = 0;
+            for (let i = 0; i < img1.data.length; i += 4) {
+                const diff = img1.data[i] - img2.data[i];
+                mse += diff * diff;
+            }
+            mse /= (img1.width * img1.height);
+            if (mse === 0) return Infinity;
+            const maxIntensity = 255;
+            return 20 * Math.log10(maxIntensity / Math.sqrt(mse));
+        }
+
+        document.getElementById('denoiseButton').addEventListener('click', function() {
+            const imageInput = document.getElementById('imageInput');
+            const file = imageInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const originalCanvas = document.getElementById('originalCanvas');
+                        const ctx = originalCanvas.getContext('2d');
+                        originalCanvas.width = img.width;
+                        originalCanvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+
+                        const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                        const sigma = 25; // Adjust noise level as needed
+                        const params = {
+                            step1BlkSize: 8,
+                            step1BlkStep: 4,
+                            step1MaxMatchedCnt: 16,
+                            step1SearchWindow: 20,
+                            step1MatchThreshold: 2500
+                        };
+
+                        const result = simplifiedBM3D(imageData, sigma, params);
+
+                        const denoisedCanvas = document.getElementById('denoisedCanvas');
+                        const denoisedCtx = denoisedCanvas.getContext('2d');
+                        denoisedCanvas.width = img.width;
+                        denoisedCanvas.height = img.height;
+                        denoisedCtx.putImageData(result, 0, 0);
+
+                        const psnr = calculatePSNR(imageData, result);
+                        document.getElementById('psnrResult').textContent = `PSNR: ${psnr.toFixed(2)} dB`;
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+    </script>
+</body>
+</html>

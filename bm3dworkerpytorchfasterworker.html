@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>  
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Enhancement with Real-ESRGAN</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>    
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #inputImage, #outputImage {
+            max-width: 100%;
+            height: auto;
+        }
+    </style>
+</head> 
+<body>  
+    <h1>Image Enhancement with Real-ESRGAN</h1>
+    <input type="file" id="imageInput" accept="image/*">
+    <button onclick="enhanceImage()">Enhance Image</button>
+    <div>
+        <h2>Input Image:</h2>
+        <img id="inputImage" alt="Input Image">
+    </div>
+    <div>
+        <h2>Enhanced Image:</h2>
+        <img id="outputImage" alt="Enhanced Image">
+    </div>
+    <script>
+        let model;
+        async function loadModel() {
+            const paramResponse = await fetch(`realesr-animevideov3-x2.param`);
+            const binResponse = await fetch(`realesr-animevideov3-x2.bin`);
+            const binBuffer = await binResponse.arrayBuffer();
+            const paramText = await paramResponse.text();
+            console.log('Param file size:', paramText.length, 'bytes');
+    console.log('Bin file size:', binBuffer.byteLength, 'bytes');
+            console.log('paramText :>> ', paramText);
+            console.log('binBuffer :>> ', binBuffer);
+            const binView = new Uint8Array(binBuffer);
+console.log('First 10 bytes of bin file:', binView.slice(0, 10));
+const paramLines = paramText.split('\n');
+console.log('Number of lines in param file:', paramLines.length);
+console.log('First few lines of param file:');
+paramLines.slice(0, 5).forEach(line => console.log(line));
+const nonAsciiCheck = paramText.split('').some(char => char.charCodeAt(0) > 127);
+console.log('Param file contains non-ASCII characters:', nonAsciiCheck);
+
+console.log('Param file type:', paramResponse.headers.get('Content-Type'));
+console.log('Bin file type:', binResponse.headers.get('Content-Type'));
+try {
+    JSON.parse(new TextDecoder().decode(binBuffer));
+    console.warn('Bin file appears to be in text format, not binary');
+} catch (e) {
+    console.log('Bin file is not in JSON format (expected)');
+}
+console.log('Param file CORS:', paramResponse.type);
+console.log('Bin file CORS:', binResponse.type);
+const onnxMagicNumber = [0x4F, 0x4E, 0x4E, 0x58];  // "ONNX" in ASCII
+const isBinOnnx = onnxMagicNumber.every((byte, index) => binView[index] === byte);
+console.log('Bin file has ONNX header:', isBinOnnx);
+            return {
+                bin: new Uint8Array(binBuffer),
+                param: paramText
+            };
+        }
+        async function initializeModel() {
+            const modelData = await loadModel();
+            model = await ort.InferenceSession.create(modelData.bin, { executionProviders: ['webgl'] });
+        }
+        async function enhanceImage() {
+            if (!model) {
+                alert("Model is not loaded yet. Please wait.");
+                return;
+            }
+            const inputImage = document.getElementById('inputImage');
+            const file = document.getElementById('imageInput').files[0];
+            if (!file) {
+                alert("Please select an image first.");
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                inputImage.src = e.target.result;    
+                const img = new Image();
+                img.onload = async function() {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const inputTensor = new ort.Tensor('float32', new Float32Array(imageData.data), [1, 3, canvas.height, canvas.width]);
+                    const outputMap = await model.run({ 'input': inputTensor });
+                    const outputTensor = outputMap['output'];
+                    const outputData = outputTensor.data;
+                    const enhancedCanvas = document.createElement('canvas');
+                    enhancedCanvas.width = canvas.width * 2;
+                    enhancedCanvas.height = canvas.height * 2;
+                    const enhancedCtx = enhancedCanvas.getContext('2d');
+                    const enhancedImageData = enhancedCtx.createImageData(enhancedCanvas.width, enhancedCanvas.height);
+                    for (let i = 0; i < outputData.length; i++) {
+                        enhancedImageData.data[i] = Math.max(0, Math.min(255, outputData[i] * 255));
+                    }
+                    enhancedCtx.putImageData(enhancedImageData, 0, 0);
+                    document.getElementById('outputImage').src = enhancedCanvas.toDataURL();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        initializeModel();
+    </script>
+</body> 
+</html> 

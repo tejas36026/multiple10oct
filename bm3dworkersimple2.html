@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fast Image Denoising</title>
+</head>
+<body>
+    <input type="file" id="imageInput" accept="image/*">
+    <button id="denoiseButton">Denoise Image</button>
+    <div>
+        <canvas id="originalCanvas"></canvas>
+        <canvas id="denoisedCanvas"></canvas>
+    </div>
+    <p id="psnrResult"></p>
+
+    <script>
+        function fastDenoise(imageData, radius = 1, iterations = 2) {
+            const { width, height, data } = imageData;
+            let output = new Uint8ClampedArray(data);
+            
+            for (let iter = 0; iter < iterations; iter++) {
+                const temp = new Uint8ClampedArray(data.length);
+                
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        let r = 0, g = 0, b = 0, count = 0;
+                        
+                        for (let dy = -radius; dy <= radius; dy++) {
+                            for (let dx = -radius; dx <= radius; dx++) {
+                                const nx = x + dx;
+                                const ny = y + dy;
+                                
+                                if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                                    const i = (ny * width + nx) * 4;
+                                    r += output[i];
+                                    g += output[i + 1];
+                                    b += output[i + 2];
+                                    count++;
+                                }
+                            }
+                        }
+                        
+                        const i = (y * width + x) * 4;
+                        temp[i] = r / count;
+                        temp[i + 1] = g / count;
+                        temp[i + 2] = b / count;
+                        temp[i + 3] = output[i + 3];
+                    }
+                }
+                
+                output = temp;
+            }
+            
+            return new ImageData(output, width, height);
+        }
+
+        function calculatePSNR(img1, img2) {
+            let mse = 0;
+            for (let i = 0; i < img1.data.length; i += 4) {
+                const diff = img1.data[i] - img2.data[i];
+                mse += diff * diff;
+            }
+            mse /= (img1.width * img1.height);
+            if (mse === 0) return Infinity;
+            const maxIntensity = 255;
+            return 20 * Math.log10(maxIntensity / Math.sqrt(mse));
+        }
+
+        document.getElementById('denoiseButton').addEventListener('click', function() {
+            const imageInput = document.getElementById('imageInput');
+            const file = imageInput.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const img = new Image();
+                    img.onload = function() {
+                        const originalCanvas = document.getElementById('originalCanvas');
+                        const ctx = originalCanvas.getContext('2d');
+                        originalCanvas.width = img.width;
+                        originalCanvas.height = img.height;
+                        ctx.drawImage(img, 0, 0);
+
+                        const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                        
+                        console.time('Denoising');
+                        const result = fastDenoise(imageData, 1, 2);
+                        console.timeEnd('Denoising');
+
+                        const denoisedCanvas = document.getElementById('denoisedCanvas');
+                        const denoisedCtx = denoisedCanvas.getContext('2d');
+                        denoisedCanvas.width = img.width;
+                        denoisedCanvas.height = img.height;
+                        denoisedCtx.putImageData(result, 0, 0);
+
+                        const psnr = calculatePSNR(imageData, result);
+                        document.getElementById('psnrResult').textContent = `PSNR: ${psnr.toFixed(2)} dB`;
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+    </script>
+</body>
+</html>

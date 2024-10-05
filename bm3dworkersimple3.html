@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Comparison Magnifier</title>
+    <style>
+
+        #comparison-container {
+            position: relative;
+            width: 600px;
+            height: 400px;
+            overflow: hidden;
+        }
+        #original, #upscaled {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #magnifier {
+            position: absolute;
+            width: 200px;
+            height: 200px;
+            border: 2px solid white;
+            border-radius: 50%;
+            cursor: none;
+            display: none;
+            overflow: hidden;
+        }
+        #mag-original, #mag-upscaled {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #mag-upscaled {
+            filter: saturate(150%) contrast(120%);
+        }
+        #divider {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            width: 2px;
+            height: 100%;
+            background-color: white;
+        }
+        #denoised-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+}
+
+#upscaled {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+    </style>
+</head>
+<body>
+    <input type="file" id="original-upload" accept="image/*">
+    <input type="file" id="denoised-upload" accept="image/*">
+    
+    <div id="comparison-container">
+        <img id="original" alt="Original">
+        <div id="denoised-container">
+            <img id="upscaled" alt="Denoised">
+        </div>
+        <div id="divider"></div>
+        <div id="magnifier">
+            <img id="mag-original" alt="Magnified Original">
+            <img id="mag-upscaled" alt="Magnified Denoised">
+        </div>
+    </div>
+    <script>
+        const container = document.getElementById('comparison-container');
+        const magnifier = document.getElementById('magnifier');
+        const magOriginal = document.getElementById('mag-original');
+        const magUpscaled = document.getElementById('mag-upscaled');
+        const divider = document.getElementById('divider');
+        const originalUpload = document.getElementById('original-upload');
+        const denoisedUpload = document.getElementById('denoised-upload');
+
+        let isMouseDown = false;
+
+        function handleFileUpload(file, imgElement, magImgElement) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                imgElement.src = e.target.result;
+                magImgElement.src = e.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        originalUpload.addEventListener('change', function(e) {
+            handleFileUpload(e.target.files[0], document.getElementById('original'), magOriginal);
+        });
+
+        denoisedUpload.addEventListener('change', function(e) {
+            handleFileUpload(e.target.files[0], document.getElementById('upscaled'), magUpscaled);
+        });
+
+        container.addEventListener('mousedown', () => isMouseDown = true);
+        container.addEventListener('mouseup', () => isMouseDown = false);
+        container.addEventListener('mouseleave', () => {
+            isMouseDown = false;
+            magnifier.style.display = 'none';
+        });
+
+        container.addEventListener('mousemove', (e) => {
+            if (!isMouseDown) return;
+
+            const rect = container.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // Position the magnifier
+            magnifier.style.left = `${x - 100}px`;
+            magnifier.style.top = `${y - 100}px`;
+            magnifier.style.display = 'block';
+
+            // Calculate the position for magnified images
+            const magX = x * 5 - 100;  // 5x zoom
+            const magY = y * 5 - 100;
+
+            magOriginal.style.left = `${-magX}px`;
+            magOriginal.style.top = `${-magY}px`;
+            magUpscaled.style.left = `${-magX}px`;
+            magUpscaled.style.top = `${-magY}px`;
+
+            // Adjust the divider in the magnifier
+            if (x < rect.width / 2) {
+                magUpscaled.style.clip = `rect(0px, ${200 - (rect.width/2 - x)}px, 200px, 0px)`;
+                magOriginal.style.clip = `rect(0px, 200px, 200px, ${200 - (rect.width/2 - x)}px)`;
+            } else {
+                magUpscaled.style.clip = `rect(0px, 200px, 200px, ${x - rect.width/2}px)`;
+                magOriginal.style.clip = `rect(0px, ${x - rect.width/2}px, 200px, 0px)`;
+            }
+        });
+
+        
+        divider.addEventListener('mousedown', (e) => {
+    e.stopPropagation();
+    const move = (moveEvent) => {
+        const rect = container.getBoundingClientRect();
+        const x = moveEvent.clientX - rect.left;
+        divider.style.left = `${x}px`;
+        document.getElementById('denoised-container').style.clip = `rect(0px, ${x}px, ${rect.height}px, 0px)`;
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', () => {
+        document.removeEventListener('mousemove', move);
+    }, { once: true });
+});
+   
+   </script>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clear Table</title>
+</head>
+<body>
+    <h1>Clear Table</h1>
+    <button id="clearButton">Clear Table</button>
+    <p id="status"></p>
+
+    <script>
+        const clearButton = document.getElementById('clearButton');
+        const statusElement = document.getElementById('status');
+
+        clearButton.addEventListener('click', async () => {
+            try {
+                const response = await fetch('https://spring-picayune-derby.glitch.me/clear-table', {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    statusElement.textContent = 'Table cleared successfully!';
+                } else {
+                    statusElement.textContent = 'Error: ' + data.error;
+                }
+            } catch (error) {
+                statusElement.textContent = 'Error: ' + error.message;
+            }
+        });
+    </script>
+</body>
+</html>

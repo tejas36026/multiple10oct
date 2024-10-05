@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Process i.png</title>
+</head>
+<body>
+    <input type="range" id="blockSizeInput" min="1" max="50" value="76">
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const worker = new Worker('blockDissolveWorker.js');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const blockSizeInput = document.getElementById('blockSizeInput');
+
+        const img = new Image();
+        img.onload = () => {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            processImage();
+        };
+        img.src = 'i.png';
+
+        blockSizeInput.addEventListener('input', processImage);
+
+        function processImage() {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            worker.postMessage({
+                imageData: imageData,
+                value: blockSizeInput.value
+            });
+        }
+
+        worker.onmessage = (e) => {
+            const { imageData } = e.data;
+            ctx.putImageData(imageData, 0, 0);
+        };
+    </script>
+</body>
+</html>

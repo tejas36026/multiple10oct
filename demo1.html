@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seam Carving Object Removal</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        canvas { border: 1px solid #000; }
+    </style>
+</head>
+<body>
+    <h1>Seam Carving Object Removal</h1>
+    <input type="file" id="imageUpload" accept="image/*">
+    <br><br>
+    <canvas id="canvas"></canvas>
+    <br>
+    <button id="toggleDraw">Toggle Draw Mode</button>
+    <button id="removeObject">Remove Object</button>
+
+    <script>
+        // image.js functions
+        const getPixel = (imageData, { x, y }) => {
+            const i = (y * imageData.width + x) * 4;
+            return [
+                imageData.data[i],
+                imageData.data[i + 1],
+                imageData.data[i + 2],
+                imageData.data[i + 3]
+            ];
+        };
+
+        const setPixel = (imageData, { x, y }, color) => {
+            const i = (y * imageData.width + x) * 4;
+            imageData.data[i] = color[0];
+            imageData.data[i + 1] = color[1];
+            imageData.data[i + 2] = color[2];
+            imageData.data[i + 3] = color[3];
+        };
+
+        // seam-carving.js functions
+        const OBJECT_REMOVAL_ENERGY = -1000;
+
+        const matrix = (w, h, filler) => {
+            return new Array(h).fill(null).map(() => new Array(w).fill(filler));
+        };
+
+        const getPixelEnergy = (left, middle, right) => {
+            const [mR, mG, mB] = middle;
+            
+            let lEnergy = 0;
+            if (left) {
+                const [lR, lG, lB] = left;
+                lEnergy = (lR - mR) ** 2 + (lG - mG) ** 2 + (lB - mB) ** 2;
+            }
+            
+            let rEnergy = 0;
+            if (right) {
+                const [rR, rG, rB] = right;
+                rEnergy = (rR - mR) ** 2 + (rG - mG) ** 2 + (rB - mB) ** 2;
+            }
+            
+            return Math.sqrt(lEnergy + rEnergy);
+        };
+
+        const calculateEnergyMap = (img, { w, h }, objectMask) => {
+            const energyMap = matrix(w, h, Infinity);
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    if (objectMask && objectMask[y][x]) {
+                        energyMap[y][x] = OBJECT_REMOVAL_ENERGY;
+                    } else {
+                        const left = (x - 1) >= 0 ? getPixel(img, { x: x - 1, y }) : null;
+                        const middle = getPixel(img, { x, y });
+                        const right = (x + 1) < w ? getPixel(img, { x: x + 1, y }) : null;
+                        energyMap[y][x] = getPixelEnergy(left, middle, right);
+                    }
+                }
+            }
+            return energyMap;
+        };
+
+        const findLowEnergySeam = (energyMap, { w, h }) => {
+            const seamPixelsMap = matrix(w, h, null);
+            
+            for (let x = 0; x < w; x++) {
+                seamPixelsMap[0][x] = {
+                    energy: energyMap[0][x],
+                    coordinate: { x, y: 0 },
+                    previous: null,
+                };
+            }
+            
+            for (let y = 1; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    let minPrevEnergy = Infinity;
+                    let minPrevX = x;
+                    for (let i = (x - 1); i <= (x + 1); i++) {
+                        if (i >= 0 && i < w && seamPixelsMap[y - 1][i].energy < minPrevEnergy) {
+                            minPrevEnergy = seamPixelsMap[y - 1][i].energy;
+                            minPrevX = i;
+                        }
+                    }
+                    
+                    seamPixelsMap[y][x] = {
+                        energy: minPrevEnergy + energyMap[y][x],
+                        coordinate: { x, y },
+                        previous: { x: minPrevX, y: y - 1 },
+                    };
+                }
+            }
+            
+            let lastMinCoordinate = null;
+            let minSeamEnergy = Infinity;
+            for (let x = 0; x < w; x++) {
+                if (seamPixelsMap[h - 1][x].energy < minSeamEnergy) {
+                    minSeamEnergy = seamPixelsMap[h - 1][x].energy;
+                    lastMinCoordinate = { x, y: h - 1 };
+                }
+            }
+            
+            const seam = [];
+            if (!lastMinCoordinate) {
+                return seam;
+            }
+            
+            let currentSeam = seamPixelsMap[lastMinCoordinate.y][lastMinCoordinate.x];
+            while (currentSeam) {
+                seam.push(currentSeam.coordinate);
+                const prevMinCoordinates = currentSeam.previous;
+                if (!prevMinCoordinates) {
+                    currentSeam = null;
+                } else {
+                    currentSeam = seamPixelsMap[prevMinCoordinates.y][prevMinCoordinates.x];
+                }
+            }
+            
+            return seam.reverse();
+        };
+
+        const deleteSeam = (img, seam, { w }) => {
+            seam.forEach(({ x: seamX, y: seamY }) => {
+                for (let x = seamX; x < (w - 1); x++) {
+                    const nextPixel = getPixel(img, { x: x + 1, y: seamY });
+                    setPixel(img, { x, y: seamY }, nextPixel);
+                }
+            });
+        };
+
+        const removeObject = (img, objectMask, callback) => {
+            const size = { w: img.width, h: img.height };
+            const pxToRemove = Math.max(...objectMask.map(row => row.filter(Boolean).length));
+            
+            for (let i = 0; i < pxToRemove; i++) {
+                const energyMap = calculateEnergyMap(img, size, objectMask);
+                const seam = findLowEnergySeam(energyMap, size);
+                deleteSeam(img, seam, size);
+                
+                // Update object mask
+                seam.forEach(({ x, y }) => {
+                    for (let j = x; j < size.w - 1; j++) {
+                        objectMask[y][j] = objectMask[y][j + 1];
+                    }
+                    objectMask[y][size.w - 1] = false;
+                });
+                
+                size.w--;
+                
+                if (callback) {
+                    callback({ img, size, step: i, steps: pxToRemove });
+                }
+            }
+            
+            return { img, size };
+        };
+
+        // User interface code
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const imageUpload = document.getElementById('imageUpload');
+        const toggleDrawBtn = document.getElementById('toggleDraw');
+        const removeObjectBtn = document.getElementById('removeObject');
+
+        let img = null;
+        let drawMode = false;
+        let objectMask = null;
+        let isDrawing = false;
+
+        imageUpload.addEventListener('change', loadImage);
+        toggleDrawBtn.addEventListener('click', () => {
+            drawMode = !drawMode;
+            toggleDrawBtn.textContent = drawMode ? 'Disable Draw' : 'Enable Draw';
+        });
+        removeObjectBtn.addEventListener('click', performObjectRemoval);
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+
+        function loadImage(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                img = new Image();
+                img.onload = function() {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    objectMask = matrix(img.width, img.height, false);
+                }
+                img.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        function startDrawing(e) {
+            if (!drawMode) return;
+            isDrawing = true;
+            draw(e);
+        }
+
+        function draw(e) {
+            if (!isDrawing || !drawMode) return;
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, Math.PI * 2);
+            ctx.fill();
+
+            for (let i = -5; i <= 5; i++) {
+                for (let j = -5; j <= 5; j++) {
+                    if (x + i >= 0 && x + i < canvas.width && y + j >= 0 && y + j < canvas.height) {
+                        objectMask[y + j][x + i] = true;
+                    }
+                }
+            }
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
+        function performObjectRemoval() {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const result = removeObject(imageData, objectMask, updateCanvas);
+            canvas.width = result.size.w;
+            canvas.height = result.size.h;
+            ctx.putImageData(result.img, 0, 0);
+        }
+
+        function updateCanvas({ img, size, step, steps }) {
+            ctx.putImageData(img, 0, 0);
+            console.log(`Progress: ${step + 1}/${steps}`);
+        }
+    </script>
+</body>
+</html>

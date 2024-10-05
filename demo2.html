@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Resizer with Seam Carving</title>
+    <style>
+        .mb-6 { margin-bottom: 1.5rem; }
+        .hidden { display: none; }
+        .flex { display: flex; }
+        .flex-col { flex-direction: column; }
+        .flex-row { flex-direction: row; }
+        .justify-center { justify-content: center; }
+        .items-center { align-items: center; }
+        .text-xs { font-size: 0.75rem; }
+        .text-gray-400 { color: #9ca3af; }
+        .mr-1 { margin-right: 0.25rem; }
+        .mr-2 { margin-right: 0.5rem; }
+        .mr-6 { margin-right: 1.5rem; }
+        .mb-1 { margin-bottom: 0.25rem; }
+        .mb-2 { margin-bottom: 0.5rem; }
+        .mb-3 { margin-bottom: 0.75rem; }
+        .w-14 { width: 3.5rem; }
+        .text-center { text-align: center; }
+        #energyMapCanvas, #seamCanvas { 
+            position: absolute; 
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="resizerControls">
+            <div class="mb-3 flex flex-row">
+                <div class="mr-2">
+                    <label>
+                        <input type="file" id="fileInput" accept="image/png,image/jpeg" style="display: none;">
+                        <span class="button">Choose image</span>
+                    </label>
+                </div>
+                <div>
+                    <button id="resizeButton" disabled>Resize</button>
+                </div>
+            </div>
+            <div class="flex flex-col sm:flex-row">
+                <div class="mb-2 mr-6 flex flex-row items-center">
+                    <div class="text-xs mr-1">Width</div>
+                    <input type="number" id="widthInput" min="1" max="100" class="w-14 text-center" value="80">
+                    <div class="text-xs ml-1 mr-4">%</div>
+                    <div class="text-xs mr-1">Height</div>
+                    <input type="number" id="heightInput" min="1" max="100" class="w-14 text-center" value="80">
+                    <div class="text-xs ml-1">%</div>
+                </div>
+                <div class="mb-2">
+                    <label>
+                        <input type="checkbox" id="showEnergyMap">
+                        <span class="text-xs">Show Energy Map</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <div id="progressBar" class="mb-6 hidden">
+            <div class="progress-bar">
+                <div class="progress" style="width: 0%"></div>
+            </div>
+        </div>
+        <div id="imageContainer" style="position: relative;">
+            <canvas id="imageCanvas"></canvas>
+            <canvas id="energyMapCanvas" class="hidden"></canvas>
+            <canvas id="seamCanvas" class="hidden"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const resizeButton = document.getElementById('resizeButton');
+        const widthInput = document.getElementById('widthInput');
+        const heightInput = document.getElementById('heightInput');
+        const showEnergyMapCheckbox = document.getElementById('showEnergyMap');
+        const progressBar = document.getElementById('progressBar');
+        const imageCanvas = document.getElementById('imageCanvas');
+        const energyMapCanvas = document.getElementById('energyMapCanvas');
+        const seamCanvas = document.getElementById('seamCanvas');
+
+        let isResizing = false;
+        let originalImage = null;
+        let imageData = null;
+        let energyMap = null;
+
+        function getPixel(imgData, x, y) {
+            const index = (y * imgData.width + x) * 4;
+            return [
+                imgData.data[index],
+                imgData.data[index + 1],
+                imgData.data[index + 2],
+                imgData.data[index + 3]
+            ];
+        }
+
+        function setPixel(imgData, x, y, [r, g, b, a]) {
+            const index = (y * imgData.width + x) * 4;
+            imgData.data[index] = r;
+            imgData.data[index + 1] = g;
+            imgData.data[index + 2] = b;
+            imgData.data[index + 3] = a;
+        }
+
+        function calculateEnergy(imgData, x, y) {
+            const w = imgData.width;
+            const h = imgData.height;
+            const left = x > 0 ? getPixel(imgData, x - 1, y) : getPixel(imgData, x, y);
+            const right = x < w - 1 ? getPixel(imgData, x + 1, y) : getPixel(imgData, x, y);
+            const up = y > 0 ? getPixel(imgData, x, y - 1) : getPixel(imgData, x, y);
+            const down = y < h - 1 ? getPixel(imgData, x, y + 1) : getPixel(imgData, x, y);
+
+            let energy = 0;
+            for (let i = 0; i < 3; i++) {
+                energy += Math.pow(left[i] - right[i], 2) + Math.pow(up[i] - down[i], 2);
+            }
+            return Math.sqrt(energy);
+        }
+
+        function calculateEnergyMap(imgData) {
+            const w = imgData.width;
+            const h = imgData.height;
+            const energyMap = new Array(h).fill().map(() => new Array(w).fill(0));
+
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    energyMap[y][x] = calculateEnergy(imgData, x, y);
+                }
+            }
+
+            return energyMap;
+        }
+
+        function findVerticalSeam(energyMap) {
+            const w = energyMap[0].length;
+            const h = energyMap.length;
+            const dp = new Array(h).fill().map(() => new Array(w).fill(0));
+            const backtrack = new Array(h).fill().map(() => new Array(w).fill(0));
+
+            // Initialize first row
+            for (let x = 0; x < w; x++) {
+                dp[0][x] = energyMap[0][x];
+            }
+
+            // Fill dp table
+            for (let y = 1; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    let minEnergy = dp[y-1][x];
+                    let minX = x;
+
+                    if (x > 0 && dp[y-1][x-1] < minEnergy) {
+                        minEnergy = dp[y-1][x-1];
+                        minX = x - 1;
+                    }
+                    if (x < w - 1 && dp[y-1][x+1] < minEnergy) {
+                        minEnergy = dp[y-1][x+1];
+                        minX = x + 1;
+                    }
+
+                    dp[y][x] = energyMap[y][x] + minEnergy;
+                    backtrack[y][x] = minX;
+                }
+            }
+
+            // Find minimum energy path
+            let minX = 0;
+            for (let x = 1; x < w; x++) {
+                if (dp[h-1][x] < dp[h-1][minX]) {
+                    minX = x;
+                }
+            }
+
+            const seam = [];
+            for (let y = h - 1; y >= 0; y--) {
+                seam.unshift([minX, y]);
+                minX = backtrack[y][minX];
+            }
+
+            return seam;
+        }
+
+        function removeVerticalSeam(imgData, seam) {
+            const w = imgData.width;
+            const h = imgData.height;
+            const newImgData = new ImageData(w - 1, h);
+
+            for (let y = 0; y < h; y++) {
+                let seamX = seam[y][0];
+                for (let x = 0; x < w - 1; x++) {
+                    if (x < seamX) {
+                        setPixel(newImgData, x, y, getPixel(imgData, x, y));
+                    } else {
+                        setPixel(newImgData, x, y, getPixel(imgData, x + 1, y));
+                    }
+                }
+            }
+
+            return newImgData;
+        }
+
+        async function resizeImage(imgData, targetWidth) {
+    const initialWidth = imgData.width;
+    const h = imgData.height;
+    let currentImgData = imgData;
+
+    while (currentImgData.width > targetWidth) {
+        energyMap = calculateEnergyMap(currentImgData);
+        const seam = findVerticalSeam(energyMap);
+        currentImgData = removeVerticalSeam(currentImgData, seam);
+
+        // Update progress
+        const progress = (initialWidth - currentImgData.width) / (initialWidth - targetWidth);
+        updateProgress(progress);
+
+        // Visualize the process
+        drawImage(currentImgData);
+        if (showEnergyMapCheckbox.checked) {
+            drawEnergyMap(energyMap);
+        }
+        drawSeam(seam);
+
+        // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    return currentImgData;
+}
+
+
+
+        function drawImage(imgData) {
+            imageCanvas.width = imgData.width;
+            imageCanvas.height = imgData.height;
+            imageCanvas.getContext('2d').putImageData(imgData, 0, 0);
+        }
+
+        function drawEnergyMap(energyMap) {
+            const w = energyMap[0].length;
+            const h = energyMap.length;
+            energyMapCanvas.width = w;
+            energyMapCanvas.height = h;
+            const ctx = energyMapCanvas.getContext('2d');
+            const imgData = ctx.createImageData(w, h);
+
+            let maxEnergy = 0;
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    maxEnergy = Math.max(maxEnergy, energyMap[y][x]);
+                }
+            }
+
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    const energy = energyMap[y][x];
+                    const intensity = Math.floor((energy / maxEnergy) * 255);
+                    setPixel(imgData, x, y, [intensity, intensity, intensity, 255]);
+                }
+            }
+
+            ctx.putImageData(imgData, 0, 0);
+        }
+
+        function drawSeam(seam) {
+            seamCanvas.width = imageCanvas.width;
+            seamCanvas.height = imageCanvas.height;
+            const ctx = seamCanvas.getContext('2d');
+            ctx.strokeStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.beginPath();
+            ctx.moveTo(seam[0][0], seam[0][1]);
+            for (let i = 1; i < seam.length; i++) {
+                ctx.lineTo(seam[i][0], seam[i][1]);
+            }
+            ctx.stroke();
+        }
+
+        function updateProgress(progress) {
+            progressBar.querySelector('.progress').style.width = `${progress * 100}%`;
+        }
+
+        async function onResize() {
+    if (isResizing) return;
+    isResizing = true;
+    resizeButton.disabled = true;
+    progressBar.classList.remove('hidden');
+
+    const targetWidth = Math.floor(originalImage.width * (widthInput.value / 100));
+    const targetHeight = Math.floor(originalImage.height * (heightInput.value / 100));
+
+    try {
+        // Resize width
+        imageData = await resizeImage(imageData, targetWidth);
+
+        // Resize height (rotate image, resize, rotate back)
+        imageData = rotateImageData(imageData);
+        imageData = await resizeImage(imageData, targetHeight);
+        imageData = rotateImageData(imageData);
+
+        drawImage(imageData);
+        energyMapCanvas.classList.add('hidden');
+        seamCanvas.classList.add('hidden');
+    } catch (error) {
+        console.error('Error during resizing:', error);
+    } finally {
+        progressBar.classList.add('hidden');
+        isResizing = false;
+        resizeButton.disabled = false;
+    }
+}
+
+        function rotateImageData(imgData) {
+            const w = imgData.width;
+            const h = imgData.height;
+            const rotatedImgData = new ImageData(h, w);
+
+            for (let y = 0; y < h; y++) {
+                for (let x = 0; x < w; x++) {
+                    setPixel(rotatedImgData, y, w - 1 - x, getPixel(imgData, x, y));
+                }
+            }
+
+            return rotatedImgData;
+        }
+
+        function onFileSelect(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    originalImage = new Image();
+                    originalImage.onload = function() {
+                        imageCanvas.width = originalImage.width;
+                        imageCanvas.height = originalImage.height;
+                        const ctx = imageCanvas.getContext('2d');
+                        ctx.drawImage(originalImage, 0, 0);
+                        imageData = ctx.getImageData(0, 0, originalImage.width, originalImage.height);
+                        resizeButton.disabled = false;
+                    };
+                    originalImage.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        fileInput.addEventListener('change', onFileSelect);
+        // resizeButton.addEventListener('click', onResize);
+        resizeButton.addEventListener('click', () => {
+    onResize().catch(error => console.error('Error in onResize:', error));
+});
+        showEnergyMapCheckbox.addEventListener('change', function() {
+            energyMapCanvas.classList.toggle('hidden', !this.checked);
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BM3D Image Denoising Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .image-container {
+            position: relative;
+            width: 100%;
+            max-width: 864px;
+            margin: 20px auto;
+            border: 1px solid #ccc;
+        }
+        .image-wrapper {
+            position: relative;
+            width: 100%;
+            height: 0;
+            padding-bottom: 83.33%; /* 720/864 = 0.8333 */
+            overflow: hidden;
+        }
+        .image-wrapper img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .slider {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 50%;
+            height: 100%;
+            overflow: hidden;
+        }
+        .slider-handle {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 4px;
+            background: white;
+            left: 100%;
+            cursor: ew-resize;
+        }
+        .slider-button {
+            position: absolute;
+            left: 100%;
+            top: 50%;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: white;
+            cursor: ew-resize;
+            transform: translate(-50%, -50%);
+        }
+        .controls {
+            margin-top: 20px;
+        }
+        .control-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 200px;
+        }
+        #debugLog {
+            margin-top: 20px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <h1>BM3D Image Denoising Demo</h1>
+    
+    <input type="file" id="imageInput" accept="image/*">
+    
+    <div class="image-container" id="imageComparison">
+        <div class="image-wrapper">
+            <img id="denoisedImage" alt="Denoised Image">
+            <div class="slider">
+                <img id="originalImage" alt="Original Image">
+            </div>
+            <div class="slider-handle">
+                <div class="slider-button"></div>
+            </div>
+        </div>
+    </div>
+    <img-comparison-slider>
+  <img slot="first" id="originalImage" alt="Original Image">
+  <img slot="second" id="denoisedImage" alt="Denoised Image">
+</img-comparison-slider>
+    <div id="psnrDisplay"></div>
+    
+    <div class="controls">
+        <h3>Denoising Parameters</h3>
+        <div class="control-group">
+            <label for="sigmaInput">Estimated Noise Level (Sigma):</label>
+            <input type="number" id="sigmaInput" value="25" min="1" max="100">
+        </div>
+        <button id="denoiseButton">Denoise Image</button>
+    </div>
+
+    <div id="debugLog"></div>
+
+    <script>
+        const worker = new Worker('bm3d_worker1.js');
+        const imageComparison = document.getElementById('imageComparison');
+        const originalImage = document.getElementById('originalImage');
+        const denoisedImage = document.getElementById('denoisedImage');
+        const slider = imageComparison.querySelector('.slider');
+        const sliderHandle = imageComparison.querySelector('.slider-handle');
+        const psnrDisplay = document.getElementById('psnrDisplay');
+        const imageInput = document.getElementById('imageInput');
+        const denoiseButton = document.getElementById('denoiseButton');
+        const debugLog = document.getElementById('debugLog');
+
+        let isDragging = false;
+
+        function log(message) {
+            console.log(message);
+            debugLog.innerHTML += `<p>${message}</p>`;
+            debugLog.scrollTop = debugLog.scrollHeight;
+        }
+
+        function createPlaceholder() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 864;
+            canvas.height = 720;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#f0f0f0';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.font = '20px Arial';
+            ctx.fillStyle = '#333';
+            ctx.textAlign = 'center';
+            ctx.fillText('Please select an image', canvas.width / 2, canvas.height / 2);
+            return canvas.toDataURL();
+        }
+
+        const placeholderSrc = createPlaceholder();
+        originalImage.src = placeholderSrc;
+        denoisedImage.src = placeholderSrc;
+
+        worker.onmessage = function(e) {
+            if (e.data.error) {
+                log(`Worker error: ${e.data.error}`);
+                return;
+            }
+            log('Received denoised image data from worker');
+            const { denoisedImage: denoisedImageData, psnr } = e.data;
+            updateDenoisedImage(denoisedImageData);
+            psnrDisplay.textContent = `PSNR: ${psnr.toFixed(2)} dB`;
+        };
+
+        imageInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            log(`Selected file: ${file.name}`);
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                log('File loaded, updating images');
+                originalImage.src = event.target.result;
+                denoisedImage.src = event.target.result;
+                originalImage.onload = function() {
+                    log(`Original image loaded, dimensions: ${originalImage.naturalWidth}x${originalImage.naturalHeight}`);
+                    log(`Original image visible: ${isVisible(originalImage)}`);
+                };
+                denoisedImage.onload = function() {
+                    log(`Denoised image loaded (not yet denoised), dimensions: ${denoisedImage.naturalWidth}x${denoisedImage.naturalHeight}`);
+                    log(`Denoised image visible: ${isVisible(denoisedImage)}`);
+                };
+            };
+            reader.readAsDataURL(file);
+        });
+
+        denoiseButton.addEventListener('click', function() {
+            if (originalImage.src === placeholderSrc) {
+                log('No image selected, please select an image first.');
+                alert('Please select an image first.');
+                return;
+            }
+
+            log('Starting denoising process');
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = originalImage.naturalWidth;
+            canvas.height = originalImage.naturalHeight;
+            ctx.drawImage(originalImage, 0, 0);
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+            const params = {
+                step1BlkSize: 8,
+                step1BlkStep: 3,
+                step1MaxMatchedCnt: 16,
+                step1SearchWindow: 39,
+                step1MatchThreshold: 2500,
+                betaKaiser: 2.0
+            };
+            const sigma = parseInt(document.getElementById('sigmaInput').value);
+
+            log(`Sending image data to worker for denoising (${imageData.width}x${imageData.height}, sigma: ${sigma})`);
+            worker.postMessage({
+                imageData: {
+                    data: Array.from(imageData.data),
+                    width: imageData.width,
+                    height: imageData.height
+                },
+                sigma,
+                params
+            });
+        });
+
+        function updateDenoisedImage(denoisedImageData) {
+            log('Updating denoised image');
+            const canvas = document.createElement('canvas');
+            canvas.width = denoisedImageData.width;
+            canvas.height = denoisedImageData.height;
+            const ctx = canvas.getContext('2d');
+            const imgData = new ImageData(
+                new Uint8ClampedArray(denoisedImageData.data),
+                denoisedImageData.width,
+                denoisedImageData.height
+            );
+            ctx.putImageData(imgData, 0, 0);
+            denoisedImage.src = canvas.toDataURL();
+            denoisedImage.onload = function() {
+                log('Denoised image loaded and displayed');
+                log(`Denoised image dimensions: ${denoisedImage.naturalWidth}x${denoisedImage.naturalHeight}`);
+                log(`Denoised image visible: ${isVisible(denoisedImage)}`);
+            };
+        }
+
+        function isVisible(element) {
+            return !!(element.offsetWidth || element.offsetHeight || element.getClientRects().length);
+        }
+
+        sliderHandle.addEventListener('mousedown', startDragging);
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('mouseup', stopDragging);
+
+        function startDragging(e) {
+            isDragging = true;
+        }
+
+        function stopDragging(e) {
+            isDragging = false;
+        }
+
+        function drag(e) {
+            if (isDragging) {
+                const rect = imageComparison.getBoundingClientRect();
+                const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+                const percent = (x / rect.width) * 100;
+                slider.style.width = `${percent}%`;
+            }
+        }
+    </script>
+</body>
+</html>

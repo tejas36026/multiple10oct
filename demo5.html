@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seam Carving Image Resizer with Object Removal</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        #canvasContainer {
+            position: relative;
+            margin: 10px;
+        }
+        canvas {
+            border: 1px solid #000;
+        }
+        #maskCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+        #controls {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        input, button {
+            margin: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Seam Carving Image Resizer with Object Removal</h1>
+    <div id="controls">
+        <input type="file" id="imageInput" accept="image/*">
+        <div>
+            <label for="widthInput">Target Width:</label>
+            <input type="number" id="widthInput" min="1" step="1">
+        </div>
+        <div>
+            <label for="heightInput">Target Height:</label>
+            <input type="number" id="heightInput" min="1" step="1">
+        </div>
+        <button id="markObjectButton">Toggle Object Marking</button>
+        <button id="clearMaskButton">Clear Mask</button>
+        <button id="resizeButton">Resize Image</button>
+    </div>
+    <div id="canvasContainer">
+        <canvas id="originalCanvas"></canvas>
+        <canvas id="maskCanvas"></canvas>
+    </div>
+    <canvas id="resizedCanvas"></canvas>
+    <div id="progress"></div>
+
+   <script>
+
+    
+   </script>
+</body>
+</html>

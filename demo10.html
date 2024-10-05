@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Improved Content-Aware Image Editor</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/17.0.2/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/17.0.2/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.26.0/babel.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+</head>
+<body>
+    <div id="root"></div>
+    <input type="file" id="fileInput">
+    <canvas id="imageCanvas"></canvas>
+    <input type="number" id="targetWidth">
+    <button id="resizeButton" disabled>Resize</button>
+    <img id="editedImage" style="display: none;">
+    <script>
+// Utility functions
+const getImageData = (img) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    return ctx.getImageData(0, 0, img.width, img.height);
+};
+
+const createImageFromImageData = (imageData) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = imageData.width;
+    canvas.height = imageData.height;
+    const ctx = canvas.getContext('2d');
+    ctx.putImageData(imageData, 0, 0);
+    const img = new Image();
+    img.src = canvas.toDataURL();
+    return img;
+};
+
+// Constants
+const ALPHA_DELETE_THRESHOLD = 244;
+const MAX_WIDTH_LIMIT = 1500;
+const MAX_HEIGHT_LIMIT = 1500;
+
+// Seam carving algorithm
+const getPixelDeleteEnergy = () => {
+    const numColors = 3;
+    const maxColorDistance = 255;
+    const numNeighbors = 2;
+    const multiplier = 2;
+    const maxSeamSize = Math.max(MAX_WIDTH_LIMIT, MAX_HEIGHT_LIMIT);
+    return -1 * multiplier * numNeighbors * maxSeamSize * numColors * (maxColorDistance ** 2);
+};
+
+const getPixel = (imageData, { x, y }) => {
+    const index = (y * imageData.width + x) * 4;
+    return [
+        imageData.data[index],
+        imageData.data[index + 1],
+        imageData.data[index + 2],
+        imageData.data[index + 3]
+    ];
+};
+
+const getPixelEnergy = (left, middle, right) => {
+    const [mR, mG, mB, mA] = middle;
+
+    let lEnergy = 0;
+    if (left) {
+        const [lR, lG, lB] = left;
+        lEnergy = (lR - mR) ** 2 + (lG - mG) ** 2 + (lB - mB) ** 2;
+    }
+
+    let rEnergy = 0;
+    if (right) {
+        const [rR, rG, rB] = right;
+        rEnergy = (rR - mR) ** 2 + (rG - mG) ** 2 + (rB - mB) ** 2;
+    }
+
+    return mA > ALPHA_DELETE_THRESHOLD ? (lEnergy + rEnergy) : getPixelDeleteEnergy();
+};
+
+const getPixelEnergyH = (img, { w }, { x, y }) => {
+    const left = (x - 1) >= 0 ? getPixel(img, { x: x - 1, y }) : null;
+    const middle = getPixel(img, { x, y });
+    const right = (x + 1) < w ? getPixel(img, { x: x + 1, y }) : null;
+    return getPixelEnergy(left, middle, right);
+};
+const calculateEnergyMapH = (img, mask, { w, h }) => {
+        const energyMap = Array(h).fill().map(() => Array(w).fill(Infinity));
+        for (let y = 0; y < h; y++) {
+            for (let x = 0; x < w; x++) {
+                let energy = getPixelEnergyH(img, { w, h }, { x, y });
+                
+                // Check if the pixel is part of the mask
+                const maskIdx = (y * w + x) * 4;
+                if (mask && mask.data[maskIdx + 0] > 200 && mask.data[maskIdx + 1] < 50 && mask.data[maskIdx + 2] < 50) {
+                    // If it's a red pixel (part of the mask), set energy to a very low value
+                    energy = Number.MIN_SAFE_INTEGER;
+                }
+                
+                energyMap[y][x] = energy;
+            }
+        }
+        return energyMap;
+    };
+
+const findLowEnergySeamH = (energyMap, { w, h }) => {
+    const seamsMap = Array(h).fill().map(() => Array(w).fill(null));
+
+    // Populate the first row of the map
+    for (let x = 0; x < w; x++) {
+        seamsMap[0][x] = {
+            energy: energyMap[0][x],
+            coordinate: { x, y: 0 },
+            previous: null,
+        };
+    }
+
+    // Populate the rest of the rows
+    for (let y = 1; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            let minPrevEnergy = Infinity;
+            let minPrevX = x;
+            for (let i = (x - 1); i <= (x + 1); i++) {
+                if (i >= 0 && i < w && seamsMap[y - 1][i].energy < minPrevEnergy) {
+                    minPrevEnergy = seamsMap[y - 1][i].energy;
+                    minPrevX = i;
+                }
+            }
+
+            seamsMap[y][x] = {
+                energy: minPrevEnergy + energyMap[y][x],
+                coordinate: { x, y },
+                previous: { x: minPrevX, y: y - 1 },
+            };
+        }
+    }
+
+    // Find where the minimum energy seam ends
+    let lastMinCoordinate = null;
+    let minSeamEnergy = Infinity;
+    for (let x = 0; x < w; x++) {
+        if (seamsMap[h - 1][x].energy < minSeamEnergy) {
+            minSeamEnergy = seamsMap[h - 1][x].energy;
+            lastMinCoordinate = { x, y: h - 1 };
+        }
+    }
+
+    // Find the minimal energy seam
+    const seam = [];
+    if (!lastMinCoordinate) return seam;
+
+    let currentSeam = seamsMap[lastMinCoordinate.y][lastMinCoordinate.x];
+    while (currentSeam) {
+        seam.push(currentSeam.coordinate);
+        const prevMinCoordinates = currentSeam.previous;
+        if (!prevMinCoordinates) {
+            currentSeam = null;
+        } else {
+            currentSeam = seamsMap[prevMinCoordinates.y][prevMinCoordinates.x];
+        }
+    }
+
+    return seam.reverse();
+};
+
+const deleteSeamH = (img, seam, { w }) => {
+    const newImageData = new ImageData(w - 1, img.height);
+    seam.forEach(({ x: seamX, y: seamY }) => {
+        let newX = 0;
+        for (let x = 0; x < w; x++) {
+            if (x !== seamX) {
+                const oldIdx = (seamY * w + x) * 4;
+                const newIdx = (seamY * (w - 1) + newX) * 4;
+                for (let i = 0; i < 4; i++) {
+                    newImageData.data[newIdx + i] = img.data[oldIdx + i];
+                }
+                newX++;
+            }
+        }
+    });
+    return newImageData;
+};
+
+    // Modify the resizeImage function
+    const resizeImage = (imageData, mask, targetWidth) => {
+        let currentImageData = imageData;
+        let currentMask = mask;
+        const size = { w: imageData.width, h: imageData.height };
+
+        while (size.w > targetWidth) {
+            let energyMap = calculateEnergyMapH(currentImageData, currentMask, size);
+            const seam = findLowEnergySeamH(energyMap, size);
+            currentImageData = deleteSeamH(currentImageData, seam, size);
+            if (currentMask) {
+                currentMask = deleteSeamH(currentMask, seam, size);
+            }
+            size.w--;
+        }
+
+        return currentImageData;
+    };
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const fileInput = document.getElementById('fileInput');
+        const imageCanvas = document.getElementById('imageCanvas');
+        const targetWidthInput = document.getElementById('targetWidth');
+        const resizeButton = document.getElementById('resizeButton');
+        const editedImage = document.getElementById('editedImage');
+
+        let currentImage = null;
+        let currentMask = null;
+        let isDrawing = false;
+        let selectionBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+        let selectionStart = { x: 0, y: 0 };
+        let selectionEnd = { x: 0, y: 0 };
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    currentImage = img;
+                    imageCanvas.width = img.width;
+                    imageCanvas.height = img.height;
+                    const ctx = imageCanvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0);
+                    targetWidthInput.value = img.width;
+                    targetWidthInput.max = img.width;
+                    resizeButton.disabled = false;
+
+                    // Initialize the mask and selection
+                    currentMask = new ImageData(img.width, img.height);
+                    selectionStart = { x: 0, y: 0 };
+                    selectionEnd = { x: img.width, y: img.height };
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        imageCanvas.addEventListener('mousedown', startDrawing);
+        imageCanvas.addEventListener('mousemove', draw);
+        imageCanvas.addEventListener('mouseup', stopDrawing);
+        imageCanvas.addEventListener('mouseout', stopDrawing);
+
+        function startDrawing(e) {
+            isDrawing = true;
+            selectionStart = { x: e.offsetX, y: e.offsetY };
+            selectionBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+
+            draw(e);
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            const ctx = imageCanvas.getContext('2d');
+            ctx.strokeStyle = 'rgba(255, 0, 0, 1)';
+            ctx.lineWidth = 10;
+            ctx.lineCap = 'round';
+            
+            // Clear previous drawing
+            ctx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+            ctx.drawImage(currentImage, 0, 0);
+            
+            // Draw new selection
+            selectionEnd = { x: e.offsetX, y: e.offsetY };
+            ctx.beginPath();
+            ctx.rect(selectionStart.x, selectionStart.y, 
+                     selectionEnd.x - selectionStart.x, selectionEnd.y - selectionStart.y);
+            ctx.stroke();
+
+            // Update the mask
+            const maskCtx = document.createElement('canvas').getContext('2d');
+            maskCtx.canvas.width = imageCanvas.width;
+            maskCtx.canvas.height = imageCanvas.height;
+            maskCtx.fillStyle = 'rgba(255, 0, 0, 1)';
+            maskCtx.fillRect(selectionStart.x, selectionStart.y, 
+                             selectionEnd.x - selectionStart.x, selectionEnd.y - selectionStart.y);
+            currentMask = maskCtx.getImageData(0, 0, imageCanvas.width, imageCanvas.height);
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
+        resizeButton.addEventListener('click', () => {
+            if (!currentImage || !currentMask) return;
+
+            const imageData = getImageData(currentImage);
+            
+            // Calculate selected region dimensions
+            const selectionWidth = Math.abs(selectionEnd.x - selectionStart.x);
+            const selectionHeight = Math.abs(selectionEnd.y - selectionStart.y);
+            
+            // Calculate target dimensions (original image minus selected region)
+            const targetWidth = currentImage.width - selectionWidth;
+            const targetHeight = currentImage.height - selectionHeight;
+
+            console.log('Original image dimensions:', currentImage.width, 'x', currentImage.height);
+            console.log('Selected region:', selectionWidth, 'x', selectionHeight);
+            console.log('Target image dimensions:', targetWidth, 'x', targetHeight);
+
+            const resizedImageData = resizeImage(imageData, currentMask, targetWidth);
+            const resizedImage = createImageFromImageData(resizedImageData);
+            editedImage.src = resizedImage.src;
+            editedImage.style.display = 'block';
+
+            // console.log('Final image dimensions:', resizedImage.width, 'x', resizedImage.height);
+        });
+    });
+  
+  </script>
+</body>
+</html>
