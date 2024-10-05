@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Wand Tool with Brightness Adjustment</title>
+    <style>
+        #imageCanvas { border: 1px solid black; }
+        #generatedImages img { max-width: 200px; margin: 5px; }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <input type="file" id="imageUpload" accept="image/*">
+        <button id="addMagicWand">Add</button>
+        <button id="subtractMagicWand">Subtract</button>
+        <button id="invertMagicWand">Invert</button>
+        <label for="tolerance">Tolerance:</label>
+        <input type="range" id="tolerance" min="0" max="255" value="32">
+        <label for="imageCount">Image Count:</label>
+        <input type="number" id="imageCount" min="1" value="5">
+           <label for="brightness">Max Brightness Change:</label>
+        <input type="range" id="brightness" min="0" max="255" value="100">
+        <button id="generateImages">Generate Images</button>
+        <button id="generateGIF">Generate GIF</button>
+        
+    </div>
+    <canvas id="imageCanvas"></canvas>
+    <div id="generatedImages"></div>
+    <script>
+        
+        let imageCanvas, ctx, originalImage;
+        let selectedRegions = [];
+        let tolerance = 32;
+        let magicWandMode = 'add';
+        document.getElementById('imageUpload').addEventListener('change', loadImage);
+        document.getElementById('addMagicWand').addEventListener('click', () => magicWandMode = 'add');
+        document.getElementById('subtractMagicWand').addEventListener('click', () => magicWandMode = 'subtract');
+        document.getElementById('invertMagicWand').addEventListener('click', () => magicWandMode = 'invert');
+        document.getElementById('tolerance').addEventListener('input', (e) => tolerance = parseInt(e.target.value));
+        document.getElementById('generateImages').addEventListener('click', generateBrightnessVariations);
+
+        imageCanvas = document.getElementById('imageCanvas');
+        ctx = imageCanvas.getContext('2d');
+        imageCanvas.addEventListener('click', handleCanvasClick);
+
+            function loadImage(e) {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = function(event) {
+                    originalImage = new Image();
+                    originalImage.onload = function() {
+                        imageCanvas.width = originalImage.width;
+                        imageCanvas.height = originalImage.height;
+                        ctx.drawImage(originalImage, 0, 0);
+                        originalImageData = ctx.getImageData(0, 0, imageCanvas.width, imageCanvas.height);
+                        displaySelectedRegionsBorders();
+                    }
+                    originalImage.src = event.target.result;
+                }
+                reader.readAsDataURL(file);
+            }
+
+        function handleCanvasClick(event) {
+            const rect = imageCanvas.getBoundingClientRect();
+            const x = Math.floor((event.clientX - rect.left) / (rect.width / imageCanvas.width));
+            const y = Math.floor((event.clientY - rect.top) / (rect.height / imageCanvas.height));
+            performMagicWandSelection(x, y);
+        }
+
+        function performMagicWandSelection(startX, startY) {
+            const imageData = ctx.getImageData(0, 0, imageCanvas.width, imageCanvas.height);
+            const worker = new Worker('magicWandWorker.js');
+
+            worker.postMessage({
+                imageData: imageData,
+                startX: startX,
+                startY: startY,
+                tolerance: tolerance,
+                mode: magicWandMode
+            });
+
+            worker.onmessage = function(e) {
+                let newRegion = e.data.selectedRegion;
+                updateSelectedRegions(newRegion);
+                displaySelectedRegionsBorders();
+            };
+        }
+   
+        function updateSelectedRegions(newRegion) {
+            if (magicWandMode === 'add') {
+                selectedRegions.push(newRegion);
+            } else if (magicWandMode === 'subtract') {
+                selectedRegions = selectedRegions.map(region => 
+                    region.filter(pixel => !newRegion.includes(pixel))
+                );
+            } else if (magicWandMode === 'invert') {
+                selectedRegions = selectedRegions.map(region => {
+                    let invertedRegion = region.filter(pixel => !newRegion.includes(pixel))
+                        .concat(newRegion.filter(pixel => !region.includes(pixel)));
+                    return invertedRegion;
+                });
+            }
+        }
+
+        function displaySelectedRegionsBorders() {
+            ctx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+            ctx.drawImage(originalImage, 0, 0);
+
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 1;
+
+            selectedRegions.forEach(region => {
+                ctx.beginPath();
+                region.forEach(pixelIndex => {
+                    const x = pixelIndex % imageCanvas.width;
+                    const y = Math.floor(pixelIndex / imageCanvas.width);
+                    ctx.rect(x, y, 1, 1);
+                });
+                ctx.stroke();
+            });
+        }
+
+        function generateBrightnessVariations() {
+            const imageCount = parseInt(document.getElementById('imageCount').value);
+            const maxBrightness = parseInt(document.getElementById('brightness').value);
+            const imageData = ctx.getImageData(0, 0, imageCanvas.width, imageCanvas.height);
+            
+            const worker = new Worker('brightnessWorker.js');
+            // worker.postMessage({
+            //     imageData: imageData,
+            //     selectedRegions: selectedRegions,
+            //     imageCount: imageCount,
+            //     maxBrightness: maxBrightness
+            // });
+            worker.postMessage({
+        imageData: originalImageData,  // Use originalImageData instead of getting from canvas
+        selectedRegions: selectedRegions,
+        imageCount: imageCount,
+        maxBrightness: maxBrightness
+        });
+            worker.onmessage = function(e) {
+                displaySegmentedImages(e.data.segmentedImages);
+            };
+        }
+
+        function displaySegmentedImages(segmentedImages) {
+            const container = document.getElementById('generatedImages');
+            container.innerHTML = '';
+            
+            segmentedImages.forEach((imageData, index) => {
+                const canvas = document.createElement('canvas');
+                canvas.width = imageData.width;
+                canvas.height = imageData.height;
+                const ctx = canvas.getContext('2d');
+                ctx.putImageData(imageData, 0, 0);
+                
+                const img = document.createElement('img');
+                img.src = canvas.toDataURL();
+                img.alt = `Brightness Adjusted Image ${index + 1}`;
+                
+                container.appendChild(img);
+            });
+        }
+        
+    </script>
+</body>
+</html>

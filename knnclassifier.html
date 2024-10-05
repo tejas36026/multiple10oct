@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/body-pix"></script>
+</head>
+<body> 
+    <img id="lips" src="lipsreal.jpg" style="display: none;">
+    <canvas width="640" height="480" id="body_pix"></canvas>
+
+    <script>
+        // function to process input image and create segmentation
+        async function body_segment() {
+            const image = document.getElementById("lips");
+
+            // load HTML canvas
+            const canvas = document.getElementById("body_pix");
+            const draw = canvas.getContext("2d");
+            draw.globalAlpha = 0.3;
+
+            // color codes for segments
+            const Color_Codes = ["#663399", "#663399", "#BA55D3", "#BA55D3", "#BA55D3", "#BA55D3", "#BA55D3", "#BA55D3", "#BA55D3", "#BA55D3", "#DA70D6", "#DA70D6", "#4682B4", "#4682B4", "#008080", "#008080", "#008080", "#008080", "#008080", "#008080", "#008080", "#008080", "#008000", "#008000"];
+
+            // load body segmentation model
+            const model = await bodyPix.load();
+
+            // draw image on canvas
+            draw.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+            // extract person parts from image
+            const result = await model.segmentPersonParts(image);
+            const pixels = result.data;
+
+            // colorizing pixels based on their segment ids
+            for (let x = 0; x < canvas.width; x++) {
+                for (let y = 0; y < canvas.height; y++) {
+                    const xy = y * canvas.width + x;
+                    let color_code = "";
+                    if (pixels[xy] != -1) {
+                        // get color code of the segment
+                        color_code = Color_Codes[pixels[xy]];
+                    } else {
+                        // fill background with black color
+                        color_code = "#000000";
+                    }
+                    draw.fillStyle = color_code;
+                    draw.fillRect(x, y, 1, 1);
+                }
+            }
+        }
+
+        // run segmentation once the image is loaded
+        window.onload = function() {
+            body_segment();
+        };
+    </script>
+</body>
+</html>

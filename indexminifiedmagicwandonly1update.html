@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Magic Wand Tool with Brightness Adjustment</title>
+    <style>
+        #imageCanvas { border: 1px solid black; }
+        #generatedImages img { max-width: 200px; margin: 5px; }
+        #generatedImages {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 20px;
+    }
+    .effect-container {
+        text-align: center;
+    }
+    .effect-container canvas {
+        max-width: 100%;
+        height: auto;
+    }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <input type="file" id="imageUpload" accept="image/*">
+        <button id="addMagicWand">Add</button>
+        <button id="subtractMagicWand">Subtract</button>
+        <button id="invertMagicWand">Invert</button>
+        <label for="tolerance">Tolerance:</label>
+        <input type="range" id="tolerance" min="0" max="255" value="32">
+        <label for="imageCount">Image Count:</label>
+        <input type="number" id="imageCount" min="1" value="5">
+        <label for="brightness">Max Brightness Change:</label>
+        <input type="range" id="brightness" min="0" max="255" value="100">
+        <button id="generateImages">Generate Images</button>
+        <button id="generateGIF">Generate GIF</button>
+        <input type="number" id="value1" value="0">
+        <input type="number" id="value2" value="0">
+        <input type="number" id="value3" value="0">
+        <input type="number" id="value4" value="0">
+        <input type="number" id="value5" value="0">
+        <select id="effectSelect">
+            <option value="brightness2">Brightness</option>
+            <option value="hue1">Hue1</option>
+            <option value="saturation">Saturation</option>
+            <!-- Add more options for each effect -->
+        </select>
+        
+        
+    </div>
+    <canvas id="imageCanvas"></canvas>
+    <div id="generatedImages"></div>
+    <div id="segmentsContainer"></div>
+    <script>
+        let imageCanvas, ctx, originalImage;
+        let selectedRegions = [];
+        let tolerance = 32;
+        let magicWandMode = 'add';
+        let clickedPoints = [];
+        let lines = [];
+
+
+        document.getElementById('imageUpload').addEventListener('change', loadImage);
+        document.getElementById('addMagicWand').addEventListener('click', () => magicWandMode = 'add');
+        document.getElementById('subtractMagicWand').addEventListener('click', () => magicWandMode = 'subtract');
+        document.getElementById('invertMagicWand').addEventListener('click', () => magicWandMode = 'invert');
+        document.getElementById('tolerance').addEventListener('input', (e) => tolerance = parseInt(e.target.value));
+        // document.getElementById('generateImages').addEventListener('click', generateBrightnessVariations);
+        // document.getElementById('generateGIF').addEventListener('click', createAndDisplayGif);
+        document.getElementById('generateImages').addEventListener('click', generateEffectVariations);
+
+
+        imageCanvas = document.getElementById('imageCanvas');
+        ctx = imageCanvas.getContext('2d');
+        imageCanvas.addEventListener('click', handleCanvasClick);
+
+        function encodeGIF(frames, width, height, delay) {
+    const encoder = new GIFEncoder(width, height);
+    encoder.setRepeat(0); // 0 for repeat, -1 for no-repeat
+    encoder.setDelay(delay); // frame delay in ms
+    encoder.start();
+
+    frames.forEach(frame => {
+        encoder.addFrame(frame);
+    });
+
+    encoder.finish();
+    return encoder.stream().getData();
+}
+
+function GIFEncoder(width, height) {
+    // This is a simplified GIF encoder. A full implementation would be quite long.
+    // For brevity, I'm providing a skeleton that demonstrates the concept.
+    
+    let frames = [];
+    let delay = 0;
+    let repeat = 0;
+
+    this.setRepeat = function(r) { repeat = r; };
+    this.setDelay = function(d) { delay = d; };
+
+    this.start = function() { /* Initialize GIF */ };
+    this.addFrame = function(imageData) {
+        frames.push(imageData);
+    };
+    this.finish = function() { /* Finalize GIF */ };
+
+    this.stream = function() {
+        return {
+            getData: function() {
+                return {
+                    frames: frames,
+                    width: width,
+                    height: height,
+                    delay: delay,
+                    repeat: repeat
+                };
+            }
+        };
+    };
+}
+
+        function handleCanvasClick(event) {
+            alert("clicked")
+            const rect = imageCanvas.getBoundingClientRect();
+            const x = Math.floor((event.clientX - rect.left) / (rect.width / imageCanvas.width));
+            const y = Math.floor((event.clientY - rect.top) / (rect.height / imageCanvas.height));
+            clickedPoints.push({x, y});
+            performMagicWandSelection(x, y);
+        }
+
+        function loadImage(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                originalImage = new Image();
+                originalImage.onload = function() {
+                    imageCanvas.width = originalImage.width;
+                    imageCanvas.height = originalImage.height;
+                    ctx.drawImage(originalImage, 0, 0);
+                    originalImageData = ctx.getImageData(0, 0, imageCanvas.width, imageCanvas.height);
+                    displaySelectedRegionsBorders();
+                }
+                originalImage.src = event.target.result;
+            }
+            reader.readAsDataURL(file);
+        }
+
+        function handleCanvasClick(event) {
+            const rect = imageCanvas.getBoundingClientRect();
+            const x = Math.floor((event.clientX - rect.left) / (rect.width / imageCanvas.width));
+            const y = Math.floor((event.clientY - rect.top) / (rect.height / imageCanvas.height));
+            performMagicWandSelection(x, y);
+        }
+
+        function performMagicWandSelection(startX, startY) {
+            const imageData = ctx.getImageData(0, 0, imageCanvas.width, imageCanvas.height);
+            const worker = new Worker('magicWandWorker.js');
+
+            worker.postMessage({
+                imageData: imageData,
+                startX: startX,
+                startY: startY,
+                tolerance: tolerance,
+                mode: magicWandMode
+            });
+
+            worker.onmessage = function(e) {
+                let newRegion = e.data.selectedRegion;
+                updateSelectedRegions(newRegion);
+                displaySelectedRegionsBorders();
+            };
+        }
+
+        function updateSelectedRegions(newRegion) {
+            if (magicWandMode === 'add') {
+                selectedRegions.push(newRegion);
+            } else if (magicWandMode === 'subtract') {
+                selectedRegions = selectedRegions.map(region => 
+                    region.filter(pixel => !newRegion.includes(pixel))
+                );
+            } else if (magicWandMode === 'invert') {
+                selectedRegions = selectedRegions.map(region => {
+                    let invertedRegion = region.filter(pixel => !newRegion.includes(pixel))
+                        .concat(newRegion.filter(pixel => !region.includes(pixel)));
+                    return invertedRegion;
+                });
+            }
+        }
+
+        function displaySelectedRegionsBorders() {
+            ctx.clearRect(0, 0, imageCanvas.width, imageCanvas.height);
+            ctx.drawImage(originalImage, 0, 0);
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 1;
+            selectedRegions.forEach(region => {
+                ctx.beginPath();
+                region.forEach(pixelIndex => {
+                    const x = pixelIndex % imageCanvas.width;
+                    const y = Math.floor(pixelIndex / imageCanvas.width);
+                    ctx.rect(x, y, 1, 1);
+                });
+                ctx.stroke();
+            });
+        }
+
+
+
+        function displayAllEffects(allEffectsResults) {
+    const container = document.getElementById('generatedImages');
+    container.innerHTML = '';
+    const imageCount = parseInt(document.getElementById('imageCount').value);
+
+    allEffectsResults.forEach(result => {
+        const effectContainer = document.createElement('div');
+        effectContainer.className = 'effect-container';
+        
+        const effectLabel = document.createElement('h3');
+        effectLabel.textContent = result.effect;
+        effectContainer.appendChild(effectLabel);
+
+        if (result.effect === 'bulgepinch2' && result.segmentedImages.length > imageCount) {
+            // Handle bulgepinch2 separately
+            const numGifs = Math.min(8, Math.floor(result.segmentedImages.length / imageCount));
+            for (let i = 0; i < numGifs; i++) {
+                const gifImages = result.segmentedImages.slice(i * imageCount, (i + 1) * imageCount);
+                const gifContainer = createGifContainer(`Bulge/Pinch ${i + 1}`, gifImages);
+                effectContainer.appendChild(gifContainer);
+            }
+        } else {
+            // Handle other effects as before
+            const canvas = document.createElement('canvas');
+            canvas.width = result.segmentedImages[0].width;
+            canvas.height = result.segmentedImages[0].height;
+            effectContainer.appendChild(canvas);
+
+            const ctx = canvas.getContext('2d');
+            let currentFrame = 0;
+
+            function animate() {
+                ctx.putImageData(result.segmentedImages[currentFrame], 0, 0);
+                currentFrame = (currentFrame + 1) % result.segmentedImages.length;
+                setTimeout(() => animate(), 200); 
+            }
+
+            animate();
+        }
+
+        container.appendChild(effectContainer);
+    });
+}
+
+
+
+function generateEffectVariations() {
+    const imageCount = parseInt(document.getElementById('imageCount').value);
+    const maxBrightness = parseInt(document.getElementById('brightness').value);
+    
+    const value1 = parseInt(document.getElementById('value1').value);
+    const value2 = parseInt(document.getElementById('value2').value);
+    const value3 = parseInt(document.getElementById('value3').value);
+    const value4 = parseInt(document.getElementById('value4').value);
+    const value5 = parseInt(document.getElementById('value5').value);
+
+    const effects = [
+        // 'brightness2', 'hue1', 
+        // 'hue2',
+        // 'saturation1',
+        //  'vintage', 
+        // 'ink1', 
+        // 'bulgePinch1',
+        'bulgePinch2',
+        // 'vibrance', 'denoise', 
+        // 'hexagonalPixelate', 'invert', 
+        // 'bulgePinch', 'swirl', 'lensBlur', 'tiltShiftBlur', 
+        // 'triangularBlur', 
+        // 'zoomBlur', 'edgeWork', 'dotScreen', 'colorHalftone', 
+        // 'perspectiveTilt', 'perspectiveSqueeze', 'perspectiveCurve', 'perspectiveTwist'
+    ];
+
+    const allEffectsPromises = effects.map(effect => {
+        return new Promise((resolve) => {
+            const worker = new Worker(`${effect}Worker.js`);
+            worker.postMessage({
+                imageData: originalImageData,  
+                selectedRegions: selectedRegions,
+                imageCount: imageCount,
+                maxBrightness: maxBrightness,
+                value1: value1,
+                value2: value2,
+                value3: value3,
+                value4: value4,
+                value5: value5,
+                clickedPoints: clickedPoints,
+                lines: lines
+            });
+
+            worker.onmessage = function(e) {
+                resolve({effect: effect, segmentedImages: e.data.segmentedImages});
+            };
+        });
+    });
+
+    Promise.all(allEffectsPromises).then(results => {
+        displayAllEffects(results);
+    });
+}
+
+
+function addLine(x1, y1, x2, y2) {
+    lines.push({x1, y1, x2, y2});
+}
+
+
+function displaySegmentedImages(segmentedImages) {
+    const container = document.getElementById('generatedImages');
+    container.innerHTML = '';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = segmentedImages[0].width;
+    canvas.height = segmentedImages[0].height;
+    container.appendChild(canvas);
+
+    const ctx = canvas.getContext('2d');
+    let currentFrame = 0;
+
+    function animate() {
+        ctx.putImageData(segmentedImages[currentFrame], 0, 0);
+        currentFrame = (currentFrame + 1) % segmentedImages.length;
+        setTimeout(animate, 200); 
+    }
+
+    animate();
+}
+
+function displayCombinedEffects(allEffectsResults) {
+    const container = document.getElementById('generatedImages');
+    container.innerHTML = '';
+    
+    const backgroundEffect = allEffectsResults.find(result => result.effect === 'faceindexbackground');
+    const movementEffect = allEffectsResults.find(result => result.effect === 'faceindexmovement');
+    
+    if (backgroundEffect && movementEffect) {
+        const effectContainer = document.createElement('div');
+        effectContainer.className = 'effect-container';
+        
+        const effectLabel = document.createElement('h3');
+        effectLabel.textContent = 'Combined Effect';
+        effectContainer.appendChild(effectLabel);
+        
+        // Create and display combined effect
+        const combinedFrames = createCombinedFrames(backgroundEffect.segmentedImages[0], movementEffect.segmentedImages);
+        const combinedCanvas = createAnimatedCanvas('Combined Effect', combinedFrames);
+        effectContainer.appendChild(combinedCanvas);
+        
+        container.appendChild(effectContainer);
+    }
+}
+
+
+    </script>
+</body>
+</html>
